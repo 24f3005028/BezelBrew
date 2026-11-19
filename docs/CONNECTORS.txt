@@ -1,0 +1,76 @@
+BezelBrew: connect your mail and phone
+====================================
+Open Settings and choose Gmail, Phone, or Discord in the sidebar.
+In Phone, select Android or iPhone to see the corresponding setup.
+Setup starts off. Nothing connects to an account just by opening a page.
+
+GMAIL
+1. Choose Sign in with Google.
+2. Pick your account in your browser and approve Inbox previews.
+3. Your latest subjects, senders and unread count appear in the envelope tab.
+
+Your password stays with Google. BezelBrew cannot send, delete, or read the body
+of your messages. Choose Disconnect to stop previews and remove local access.
+You can also remove the app's grant at https://myaccount.google.com/connections .
+
+If Sign in is unavailable and the page says the publisher needs to set it up,
+this build has not been configured for Google yet. You do not need a developer
+account or a credentials file. Open Gmail still works in your browser.
+
+FOR THE APP PUBLISHER: Advanced settings retains personal-client imports.
+The separate GooglePublisherSetup.txt explains how to configure Google once
+when building the app, so end users can simply sign in.
+
+ANDROID
+1. Install the free KDE Connect app on this PC and your Android phone. The
+   setup page has buttons for Microsoft Store and Google Play.
+2. Put both devices on the same Wi-Fi. Open KDE Connect on both and pair them.
+   On the phone, select this PC, turn on Notification sync, and allow Android's
+   notification access permission when requested.
+3. Return to BezelBrew and choose Find my phone. Pick your phone by name and
+   choose Connect this phone. Your choice is saved automatically.
+
+BezelBrew searches standard install locations and running KDE Connect apps.
+You normally do not need an executable path or device ID. If more than one
+paired device appears, choose the correct one; BezelBrew will not pick for you.
+
+If your phone is missing, keep KDE Connect open, check Wi-Fi and pairing, then
+try Find my phone again. If the phone connects but alerts do not arrive, choose
+Notifications missing? for permission instructions. Some apps can hide content.
+The companion app can also need an update. Advanced settings retains manual
+paths, device IDs and refresh intervals for unusual installations.
+
+Disconnect stops BezelBrew sync; your existing KDE Connect pairing is kept.
+Phone notifications are read-only and kept in memory. Replying and remote
+dismissal are not implemented. KDE Connect is a separate open-source program;
+its background resource use is separate from BezelBrew's.
+
+IPHONE (BETA)
+1. Choose Bluetooth settings and pair your iPhone with this PC.
+2. On iPhone: Settings > Bluetooth > this PC. Turn on Share System Notifications
+   if that option is available.
+3. Choose Check connection. New authorized alerts can appear in the phone tab.
+
+This feature depends on Windows, iOS and your Bluetooth driver. A paired phone
+does not always offer notifications to Windows. Hardware validation is still
+pending; the connection status reports when sharing is unavailable.
+
+Use Phone Link instead opens Microsoft's separate app and its own setup flow.
+BezelBrew does not import Phone Link's private notification feed.
+
+DISCORD
+Open the Discord desktop window and join a voice channel. In BezelBrew, choose
+Connectors > Discord > Toggle Discord mute. BezelBrew switches to Discord and
+sends Ctrl+Shift+M. Your current channel and mute state are visible in Discord.
+
+Privacy and background use
+Account sign-in, notification permissions and phone pairing are approved by you.
+There is no BezelBrew cloud account or notification relay. User mail tokens use
+Windows Credential Manager. Headers and notifications are not saved to the INI.
+Connectors are off by default. Finding a phone runs only when you request it;
+enabled sync checks at its saved interval. Pause also suspends connector work.
+
+Official downloads and help
+https://kdeconnect.kde.org/download.html
+https://play.google.com/store/apps/details?id=org.kde.kdeconnect_tp
+https://apps.microsoft.com/detail/9n93mrmsxbf0

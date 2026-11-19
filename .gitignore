@@ -1,0 +1,12 @@
+tools/
+dist/
+*.obj
+*.pdb
+references/
+__pycache__/
+tests/*.exe
+tests/*.ini
+tests/*result.json
+tests/previews/
+client_secret*.json
+bezelbrew_google_generated.hpp
