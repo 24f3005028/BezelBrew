@@ -73,8 +73,14 @@ try:
  tab(2);assert u.SendMessageW(item(301),0x146,0,0)==8,'Starting section still includes Quick Controls'
  u.SendMessageW(item(301),0x14e,7,0);set_text(306,45);set_text(307,7);u.SendMessageW(item(308),0xf1,1,0);click(9002)
  assert 'focusMinutes=45' in saved() and 'automaticBreak=1' in saved()
- tab(3);set_text(401,'My browser');set_text(402,'https://example.com');click(9002)
+ tab(3)
+ assert text(8700)=='File Explorer' and not u.GetDlgItem(window,402),'Apps showed a raw target outside the editor'
+ click(420);set_text(401,'My browser');set_text(402,'https://example.com');click(423)
+ for index in range(5):
+  click(420);set_text(401,f'Test folder {index}');set_text(402,str(root));click(423)
+ click(9002)
  assert 'My browser' in saved() and 'https://example.com' in saved()
+ assert 'Name9=Test folder 4' in saved(),'Saving more than four shortcuts failed'
  tab(4);note='Quick note 世界\r\nSecond line \\ path';set_text(501,note);click(9002)
  assert '世界' in saved(),'Unicode text did not persist'
  close_app();launch()
@@ -91,7 +97,13 @@ try:
  click(8201)
  tab(1);assert text(207)=='140' and text(205)=='260','Behavior did not restore'
  tab(2);assert text(306)=='45' and text(307)=='7','Focus settings did not restore'
- tab(3);assert text(401)=='My browser' and text(402)=='https://example.com','Launchers did not restore'
+ tab(3)
+ assert text(8704)=='My browser' and text(8709)=='Test folder 4','Apps did not restore'
+ assert not u.GetDlgItem(window,402),'Apps exposed a target outside the editor'
+ click(8704)
+ assert text(401)=='My browser' and text(402)=='https://example.com','Editor did not restore the target'
+ click(425);click(9002)
+ assert text(8704)=='Test folder 0' and 'https://example.com' not in saved(),'Removing a shortcut did not persist'
  tab(4);assert text(501).replace('\r\n','\n')==note.replace('\r\n','\n'),'Multiline note did not restore'
  set_text(501,'unsaved change');click(2);assert not u.FindWindowW('WinPixelSettings',None),'Cancel did not close settings'
  u.SendMessageW(main,0x803d,0,0);window=wait_window('WinPixelSettings');tab(4)

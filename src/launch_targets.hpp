@@ -1,12 +1,14 @@
 #pragma once
 
-constexpr int workstationCount=6, workstationApps=4, workstationTabs=4, webAddressSize=512;
+constexpr int workstationCount=6, workstationApps=16, workstationTabs=16, webAddressSize=512;
+constexpr int appLimit=32;
+constexpr int spotifyUriSize=48;
 struct AppTarget { wchar_t name[64],path[MAX_PATH]; };
 struct Workstation {
     wchar_t name[64];
     AppTarget apps[workstationApps];
     wchar_t tabs[workstationTabs][webAddressSize];
-    wchar_t track[23];
+    wchar_t spotify[spotifyUriSize];
 };
 
 namespace LaunchTargets {
@@ -20,6 +22,7 @@ static bool webAddress(const wchar_t* input,wchar_t (&out)[webAddressSize]){
         if(c<=L' '||c==L'"'||c==L'\\'||c==127)return false;
     }
     bool hasScheme=wcsstr(input,L"://")!=nullptr;
+    if(!hasScheme&&length+8>=ARRAYSIZE(out))return false;
     if(swprintf_s(out,L"%s%.*s",hasScheme?L"":L"https://",(int)length,input)<0)return false;
     URL_COMPONENTS parts={sizeof(parts)};
     parts.dwHostNameLength=parts.dwUserNameLength=parts.dwPasswordLength=(DWORD)-1;
@@ -27,20 +30,33 @@ static bool webAddress(const wchar_t* input,wchar_t (&out)[webAddressSize]){
            !parts.dwUserNameLength&&!parts.dwPasswordLength&&
            (parts.nScheme==INTERNET_SCHEME_HTTP||parts.nScheme==INTERNET_SCHEME_HTTPS);
 }
-static bool trackId(const wchar_t* input,wchar_t (&id)[23]){
-    const wchar_t* url=L"https://open.spotify.com/track/";
-    const wchar_t* uri=L"spotify:track:";
+static bool spotifyPlaylist(const wchar_t* uri){return !_wcsnicmp(uri,L"spotify:playlist:",17);}
+static bool spotifyItem(const wchar_t* input,wchar_t (&uri)[spotifyUriSize],bool legacyTrack=false){
+    while(*input==L' '||*input==L'\t')++input;
     const wchar_t* value=input;
-    if(!_wcsnicmp(input,url,wcslen(url)))value+=wcslen(url);
-    else if(!_wcsnicmp(input,uri,wcslen(uri)))value+=wcslen(uri);
-    size_t length=wcscspn(value,L"?#");
+    bool web=false;
+    if(!_wcsnicmp(value,L"https://open.spotify.com/",25)){value+=25;web=true;}
+    else if(!_wcsnicmp(value,L"http://open.spotify.com/",24)){value+=24;web=true;}
+    else if(!_wcsnicmp(value,L"spotify:",8))value+=8;
+    else if(!legacyTrack)return false;
+    if(web&&!_wcsnicmp(value,L"intl-",5)){
+        const wchar_t* separator=wcschr(value,L'/');
+        if(!separator)return false;
+        value=separator+1;
+    }
+    bool playlist=false;
+    if(!_wcsnicmp(value,web?L"playlist/":L"playlist:",9)){value+=9;playlist=true;}
+    else if(!_wcsnicmp(value,web?L"track/":L"track:",6))value+=6;
+    else if(!legacyTrack||value!=input)return false;
+    size_t length=wcscspn(value,L"?# \t\r\n");
     if(length!=22)return false;
     for(size_t i=0;i<length;i++){
         wchar_t c=value[i];
         if(!(c>=L'a'&&c<=L'z')&&!(c>=L'A'&&c<=L'Z')&&!(c>=L'0'&&c<=L'9'))return false;
     }
-    wcsncpy_s(id,value,length);
-    return true;
+    const wchar_t* tail=value+length;
+    if(*tail!=L'?'&&*tail!=L'#'&&tail[wcsspn(tail,L" \t\r\n")])return false;
+    return swprintf_s(uri,L"spotify:%s:%.*s",playlist?L"playlist":L"track",(int)length,value)>0;
 }
 static bool open(HWND owner,const wchar_t* target,const wchar_t* args=nullptr){
     SHELLEXECUTEINFO exec={sizeof(exec)};
@@ -82,10 +98,11 @@ static bool chromePath(wchar_t (&path)[MAX_PATH]){
     return false;
 }
 struct TabsResult {int failed=0;bool fallback=false;};
-static TabsResult openTabs(HWND owner,const wchar_t (&tabs)[workstationTabs][webAddressSize],bool newWindow){
+template<size_t TabCount>
+static TabsResult openTabs(HWND owner,const wchar_t (&tabs)[TabCount][webAddressSize],bool newWindow){
     TabsResult result;
-    wchar_t valid[workstationTabs][webAddressSize]={};
-    wchar_t args[workstationTabs*(webAddressSize+3)+16]={};
+    wchar_t valid[TabCount][webAddressSize]={};
+    wchar_t args[TabCount*(webAddressSize+3)+16]={};
     if(newWindow)wcscpy_s(args,L"--new-window");
     int count=0;
     for(const auto& tab:tabs){
@@ -104,17 +121,20 @@ static TabsResult openTabs(HWND owner,const wchar_t (&tabs)[workstationTabs][web
 }
 static bool shortcut(HWND owner,const wchar_t* target){
     if(!_wcsnicmp(target,L"https://",8)||!_wcsnicmp(target,L"http://",7)){
-        wchar_t tabs[workstationTabs][webAddressSize]={};
+        wchar_t tabs[1][webAddressSize]={};
         if(wcslen(target)>=webAddressSize)return false;
         wcscpy_s(tabs[0],target);
         return openTabs(owner,tabs,false).failed==0;
     }
     return open(owner,target);
 }
-static bool openTrack(HWND owner,const wchar_t* track){
-    wchar_t uri[48],url[80];
-    swprintf_s(uri,L"spotify:track:%s",track);
-    swprintf_s(url,L"https://open.spotify.com/track/%s",track);
+static void spotifyAddress(const wchar_t* uri,wchar_t (&url)[80]){
+    bool playlist=spotifyPlaylist(uri);
+    swprintf_s(url,L"https://open.spotify.com/%s/%s",playlist?L"playlist":L"track",uri+(playlist?17:14));
+}
+static bool openSpotifyItem(HWND owner,const wchar_t* uri){
+    wchar_t url[80];
+    spotifyAddress(uri,url);
     return open(owner,uri)||open(owner,url);
 }
 }

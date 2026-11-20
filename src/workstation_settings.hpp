@@ -1,7 +1,13 @@
 #pragma once
 
-static bool shortcutWebsite[4]={};
+#include "workstation_link_dialog.hpp"
+
 static int selectedStation=-1;
+static bool workstationAddOpen=false;
+constexpr int stationAdd=443,stationAppChoice=470,stationWebsiteChoice=471,stationSpotifyChoice=472;
+constexpr int stationSpotifyEdit=456,stationSpotifyRemove=457;
+constexpr int stationAppBase=9100,stationRemoveAppBase=9120;
+constexpr int stationTabBase=9140,stationRemoveTabBase=9160;
 static void populateSettings();
 
 static bool browseTarget(AppTarget& target){
@@ -32,187 +38,145 @@ static void updateSpotifySettings(){
     if(!GetDlgItem(settingsWindow,455))return;
     bool available=SpotifyPlayback::configured(),linked=SpotifyPlayback::linked(configFile);
     if(!available){
-        SetDlgItemText(settingsWindow,455,L"Track links open in Spotify. Autoplay is unavailable in this build.");
+        SetDlgItemText(settingsWindow,455,L"Tracks and playlists open in Spotify. Press Play there to start.");
     }else{
         SetWindowText(button,linked?L"Disconnect Spotify":L"Connect Spotify");
         EnableWindow(button,!SpotifyPlayback::busy());
-        SetDlgItemText(settingsWindow,455,linked?L"Starts the track on your active Spotify device.":
-            L"Connect Spotify Premium to start the track automatically.");
+        SetDlgItemText(settingsWindow,455,linked?L"Starts playback on your active Spotify device.":
+            L"Connect Spotify Premium to start playback automatically.");
     }
-}
-static bool readShortcutDraft(){
-    for(int i=0;i<4;i++){
-        auto& name=draft.launcherNames[i];
-        auto& target=draft.launcherTargets[i];
-        GetDlgItemText(settingsWindow,401+i*2,name,ARRAYSIZE(name));
-        GetDlgItemText(settingsWindow,402+i*2,target,ARRAYSIZE(target));
-        if(!name[0]&&!target[0])continue;
-        if(!target[0]||(wcscmp(target,L"https://")==0)){
-            settingsError(L"Choose an app, enter a website, or clear both fields.");
-            SetFocus(GetDlgItem(settingsWindow,402+i*2));
-            return false;
-        }
-        if(shortcutWebsite[i]||!_wcsnicmp(target,L"http:",5)||!_wcsnicmp(target,L"https:",6)){
-            wchar_t url[webAddressSize];
-            if(!LaunchTargets::webAddress(target,url)||wcslen(url)>=ARRAYSIZE(target)){
-                settingsError(L"Enter a valid website address.");
-                SetFocus(GetDlgItem(settingsWindow,402+i*2));
-                return false;
-            }
-            wcscpy_s(target,url);
-            if(!name[0]){
-                const wchar_t* host=wcsstr(url,L"://")+3;
-                size_t length=wcscspn(host,L"/?#");
-                wcsncpy_s(name,host,length<ARRAYSIZE(name)?length:ARRAYSIZE(name)-1);
-            }
-        }
-        if(!name[0]){
-            settingsError(L"Enter a name for this shortcut.");
-            SetFocus(GetDlgItem(settingsWindow,401+i*2));
-            return false;
-        }
-    }
-    return true;
 }
 static bool readWorkstationDraft(){
     if(selectedStation<0)return true;
-    auto& saved=draft.workstations[selectedStation];
-    Workstation edited=saved;
-    GetDlgItemText(settingsWindow,444,edited.name,ARRAYSIZE(edited.name));
-    size_t length=wcslen(edited.name);
-    while(length&&edited.name[length-1]<=L' ')edited.name[--length]=0;
-    size_t begin=wcsspn(edited.name,L" \t");
-    if(begin)memmove(edited.name,edited.name+begin,(length-begin+1)*sizeof(wchar_t));
-    if(!edited.name[0]){
+    wchar_t name[64];
+    GetDlgItemText(settingsWindow,444,name,ARRAYSIZE(name));
+    size_t length=wcslen(name);
+    while(length&&name[length-1]<=L' ')name[--length]=0;
+    const wchar_t* title=name+wcsspn(name,L" \t");
+    if(!title[0]){
         settingsError(L"Give your workstation a name.");
         SetFocus(GetDlgItem(settingsWindow,444));
         return false;
     }
-    for(int i=0;i<workstationCount;i++)if(i!=selectedStation&&!_wcsicmp(draft.workstations[i].name,edited.name)){
+    for(int i=0;i<workstationCount;i++)if(i!=selectedStation&&!_wcsicmp(draft.workstations[i].name,title)){
         settingsError(L"A workstation already uses that name.");
         SetFocus(GetDlgItem(settingsWindow,444));
         return false;
     }
-    for(int i=0;i<workstationTabs;i++){
-        wchar_t url[webAddressSize];
-        int id=450+i;
-        GetDlgItemText(settingsWindow,id,url,ARRAYSIZE(url));
-        edited.tabs[i][0]=0;
-        if(url[0]&&!LaunchTargets::webAddress(url,edited.tabs[i])){
-            settingsError(L"Enter a valid web address for each tab, or leave it blank.");
-            SetFocus(GetDlgItem(settingsWindow,id));
-            return false;
-        }
-    }
-    wchar_t track[webAddressSize];
-    GetDlgItemText(settingsWindow,456,track,ARRAYSIZE(track));
-    edited.track[0]=0;
-    if(track[0]&&!LaunchTargets::trackId(track,edited.track)){
-        settingsError(L"Paste a Spotify track link, such as one copied from Share.");
-        SetFocus(GetDlgItem(settingsWindow,456));
-        return false;
-    }
-    saved=edited;
+    wcscpy_s(draft.workstations[selectedStation].name,title);
     return true;
 }
-static void launcherSettings(){
-    for(int i=0;i<4;i++){
-        int y=116+i*112;
-        wchar_t heading[30];swprintf_s(heading,L"Shortcut %d",i+1);
-        control(WC_STATIC,heading,660+i,38,y+4,163,24,0);
-        control(WC_STATIC,L"Opens",0,38,y+38,160,24);
-        HWND label=control(WC_EDIT,draft.launcherNames[i],401+i*2,218,y,470,32,ES_AUTOHSCROLL|WS_TABSTOP);
-        HWND target=control(WC_EDIT,draft.launcherTargets[i],402+i*2,218,y+34,470,32,ES_AUTOHSCROLL|WS_TABSTOP);
-        SendMessage(label,EM_SETLIMITTEXT,63,0);
-        SendMessage(target,EM_SETLIMITTEXT,MAX_PATH-1,0);
-        SendMessage(label,EM_SETCUEBANNER,FALSE,(LPARAM)L"Shortcut name");
-        SendMessage(target,EM_SETCUEBANNER,FALSE,(LPARAM)L"Website, app, or shortcut");
-        control(WC_BUTTON,L"Choose app",430+i,218,y+69,132,30,WS_TABSTOP);
-        control(WC_BUTTON,L"Enter website",434+i,364,y+69,144,30,WS_TABSTOP);
-        control(WC_BUTTON,L"Browse shortcut…",421+i,522,y+69,166,30,WS_TABSTOP);
-    }
+static int stationAppCount(const Workstation& station){
+    int count=0;
+    while(count<workstationApps&&station.apps[count].path[0])count++;
+    return count;
+}
+static int stationWebsiteCount(const Workstation& station){
+    int count=0;
+    while(count<workstationTabs&&station.tabs[count][0])count++;
+    return count;
 }
 static void workstationSettings(){
-    HWND stations=control(WC_COMBOBOX,L"",440,38,158,365,240,CBS_DROPDOWNLIST|WS_TABSTOP|WS_GROUP|WS_VSCROLL);
-    int current=-1,first=-1;
+    HWND stations=control(WC_COMBOBOX,L"",440,38,112,365,240,CBS_DROPDOWNLIST|WS_TABSTOP|WS_GROUP|WS_VSCROLL);
+    int current=-1,count=0;
     for(int i=0;i<workstationCount;i++){
         if(!draft.workstations[i].name[0])continue;
-        if(first<0)first=i;
         int row=(int)SendMessage(stations,CB_ADDSTRING,0,(LPARAM)draft.workstations[i].name);
         SendMessage(stations,CB_SETITEMDATA,row,i);
         if(selectedStation==i)current=row;
+        count++;
     }
-    if(current<0&&first>=0){selectedStation=first;current=0;}
+    if(current<0&&count){
+        current=0;
+        selectedStation=(int)SendMessage(stations,CB_GETITEMDATA,current,0);
+    }
     if(current>=0)SendMessage(stations,CB_SETCURSEL,current,0);
     else{
         choice(stations,L"No workstations yet");
         SendMessage(stations,CB_SETCURSEL,0,0);
         EnableWindow(stations,FALSE);
     }
-    HWND add=control(WC_BUTTON,L"New workstation",441,417,158,152,32,WS_TABSTOP);
-    int count=(int)SendMessage(stations,CB_GETCOUNT,0,0);
-    EnableWindow(add,first<0||count<workstationCount);
+    HWND add=control(WC_BUTTON,L"New workstation",441,417,112,152,32,WS_TABSTOP);
+    EnableWindow(add,count<workstationCount);
     if(selectedStation<0){
-        control(WC_STATIC,L"Create a workstation to open your apps, Chrome tabs, and a Spotify track together.",0,38,213,625,53);
+        control(WC_STATIC,L"Create a workstation to open your apps, websites, and Spotify music together.",0,38,164,625,44);
         return;
     }
-    control(WC_BUTTON,L"Remove",442,581,158,107,32,WS_TABSTOP);
+    control(WC_BUTTON,L"Remove",442,581,112,107,32,WS_TABSTOP);
     auto& station=draft.workstations[selectedStation];
-    caption(L"Workstation name",201);
-    HWND name=control(WC_EDIT,station.name,444,218,201,470,32,ES_AUTOHSCROLL|WS_TABSTOP);
+    caption(L"Workstation name",157);
+    HWND name=control(WC_EDIT,station.name,444,218,157,470,32,ES_AUTOHSCROLL|WS_TABSTOP);
     SendMessage(name,EM_SETLIMITTEXT,63,0);
-    control(WC_STATIC,L"Apps",660,38,247,625,24);
-    for(int i=0;i<workstationApps;i++){
-        int x=38+(i%2)*332,y=278+(i/2)*39;
-        wchar_t empty[36];swprintf_s(empty,L"Choose app %d…",i+1);
-        const auto& app=station.apps[i];
-        control(WC_BUTTON,app.path[0]?(app.name[0]?app.name:app.path):empty,460+i,x,y,245,32,WS_TABSTOP);
-        HWND clear=control(WC_BUTTON,L"Clear",464+i,x+252,y,65,32,WS_TABSTOP);
-        EnableWindow(clear,app.path[0]!=0);
+    int apps=stationAppCount(station),tabs=stationWebsiteCount(station);
+    control(WC_BUTTON,workstationAddOpen?L"−  Add item":L"+  Add item",stationAdd,38,206,127,33,WS_TABSTOP);
+    if(workstationAddOpen){
+        EnableWindow(control(WC_BUTTON,L"App…",stationAppChoice,177,206,92,33,WS_TABSTOP),apps<workstationApps);
+        EnableWindow(control(WC_BUTTON,L"Website…",stationWebsiteChoice,280,206,105,33,WS_TABSTOP),tabs<workstationTabs);
+        control(WC_BUTTON,station.spotify[0]?L"Change Spotify…":L"Spotify track or playlist…",
+                stationSpotifyChoice,397,206,203,33,WS_TABSTOP);
     }
-    control(WC_STATIC,L"Chrome tabs",661,38,362,625,24);
-    for(int i=0;i<workstationTabs;i++){
-        int x=38+(i%2)*332,y=391+(i/2)*39;
-        HWND edit=control(WC_EDIT,station.tabs[i],450+i,x,y,318,32,ES_AUTOHSCROLL|WS_TABSTOP);
-        wchar_t prompt[36];swprintf_s(prompt,L"Website for tab %d",i+1);
-        SendMessage(edit,EM_SETLIMITTEXT,webAddressSize-1,0);
-        SendMessage(edit,EM_SETCUEBANNER,FALSE,(LPARAM)prompt);
+
+    int y=255;
+    if(apps){
+        control(WC_STATIC,L"Apps",660,38,y,325,23);
+        y+=28;
+        for(int i=0;i<apps;i++){
+            int x=38+(i%2)*331,row=y+(i/2)*40;
+            const auto& app=station.apps[i];
+            control(WC_BUTTON,app.name[0]?app.name:L"Choose app…",stationAppBase+i,x,row,235,32,WS_TABSTOP);
+            control(WC_BUTTON,L"Remove",stationRemoveAppBase+i,x+244,row,75,32,WS_TABSTOP);
+        }
+        y+=((apps+1)/2)*40+12;
     }
-    caption(L"Spotify track",479);
-    wchar_t track[80]=L"";
-    if(station.track[0])swprintf_s(track,L"https://open.spotify.com/track/%s",station.track);
-    HWND edit=control(WC_EDIT,track,456,218,479,470,32,ES_AUTOHSCROLL|WS_TABSTOP);
-    SendMessage(edit,EM_SETLIMITTEXT,webAddressSize-1,0);
-    SendMessage(edit,EM_SETCUEBANNER,FALSE,(LPARAM)L"Paste a Spotify track link");
-    control(WC_STATIC,L"",455,38,523,650,43);
-    if(SpotifyPlayback::configured())control(WC_BUTTON,L"Connect Spotify",454,38,571,174,32,WS_TABSTOP);
+    if(tabs){
+        control(WC_STATIC,L"Websites",661,38,y,325,23);
+        y+=28;
+        for(int i=0;i<tabs;i++){
+            int x=38+(i%2)*331,row=y+(i/2)*40;
+            const wchar_t* url=station.tabs[i];
+            const wchar_t* host=wcsstr(url,L"://");
+            control(WC_BUTTON,host?host+3:url,stationTabBase+i,x,row,235,32,WS_TABSTOP);
+            control(WC_BUTTON,L"Remove",stationRemoveTabBase+i,x+244,row,75,32,WS_TABSTOP);
+        }
+        y+=((tabs+1)/2)*40+12;
+    }
+    if(!apps&&!tabs&&!station.spotify[0]){
+        control(WC_STATIC,L"Add what you want to open when this workstation runs.",0,38,y,650,32);
+        y+=45;
+    }
+    if(station.spotify[0]){
+        const wchar_t* label=LaunchTargets::spotifyPlaylist(station.spotify)?L"Spotify playlist · Change…":L"Spotify track · Change…";
+        control(WC_BUTTON,label,stationSpotifyEdit,38,y,235,32,WS_TABSTOP);
+        control(WC_BUTTON,L"Remove",stationSpotifyRemove,282,y,75,32,WS_TABSTOP);
+        y+=44;
+    }
+    if(SpotifyPlayback::configured()){
+        control(WC_BUTTON,L"Connect Spotify",454,38,y,174,32,WS_TABSTOP);
+        y+=42;
+    }
+    if(station.spotify[0]||SpotifyPlayback::configured())control(WC_STATIC,L"",455,38,y,650,40);
     updateSpotifySettings();
 }
-static bool launcherCommand(HWND window,int id){
-    bool browse=id>=421&&id<=424,app=id>=430&&id<=433,website=id>=434&&id<=437;
-    if(!browse&&!app&&!website)return false;
-    int slot=id-(browse?421:app?430:434);
-    int nameId=401+slot*2,targetId=nameId+1;
-    if(website){
-        shortcutWebsite[slot]=true;
-        wchar_t current[MAX_PATH];
-        GetDlgItemText(window,targetId,current,ARRAYSIZE(current));
-        if(_wcsnicmp(current,L"http://",7)&&_wcsnicmp(current,L"https://",8)){
-            SetDlgItemText(window,targetId,L"https://");
-            SetDlgItemText(window,nameId,L"");
-        }
-        HWND target=GetDlgItem(window,targetId);
-        SetFocus(target);
-        SendMessage(target,EM_SETSEL,0,-1);
-    }else{
-        AppTarget chosen={};
-        if(browse?browseTarget(chosen):pickTarget(chosen)){
-            shortcutWebsite[slot]=false;
-            SetDlgItemText(window,nameId,chosen.name);
-            SetDlgItemText(window,targetId,chosen.path);
-        }
-    }
-    return true;
+static void revealWorkstationControl(int id){
+    HWND child=GetDlgItem(settingsWindow,id);
+    const auto* item=SettingsSkin::item(child);
+    if(!item)return;
+    RECT client;
+    GetClientRect(settingsWindow,&client);
+    int bottom=MulDiv(client.bottom-D(SettingsSkin::footerHeight+10),96,settingsDpi);
+    int needed=item->bounds.bottom-bottom;
+    if(SettingsSkin::scroll<needed)SettingsSkin::scroll=needed;
+    int limit=item->bounds.top-108;
+    if(SettingsSkin::scroll>limit)SettingsSkin::scroll=limit;
+    SettingsSkin::layout();
+    if(IsWindowVisible(child))SetFocus(child);
+}
+static void refreshWorkstation(int focusId){
+    int scroll=SettingsSkin::scroll;
+    workstationAddOpen=false;
+    populateSettings();
+    SettingsSkin::scroll=scroll;
+    revealWorkstationControl(focusId);
 }
 static bool workstationCommand(HWND window,int id,int notification){
     if(id==440&&notification==CBN_SELCHANGE){
@@ -220,6 +184,7 @@ static bool workstationCommand(HWND window,int id,int notification){
         int index=(int)SendDlgItemMessage(window,440,CB_GETITEMDATA,chosenRow,0);
         if(index>=0&&index<workstationCount&&readWorkstationDraft()){
             selectedStation=index;
+            workstationAddOpen=false;
             populateSettings();
             SetFocus(GetDlgItem(window,440));
         }else{
@@ -233,6 +198,7 @@ static bool workstationCommand(HWND window,int id,int notification){
         if(!readWorkstationDraft())return true;
         for(int i=0;i<workstationCount;i++)if(!draft.workstations[i].name[0]){
             selectedStation=i;
+            workstationAddOpen=false;
             for(int suffix=1;suffix<=workstationCount;suffix++){
                 wchar_t candidate[64];swprintf_s(candidate,L"Workstation %d",suffix);
                 bool taken=false;
@@ -250,6 +216,7 @@ static bool workstationCommand(HWND window,int id,int notification){
     if(id==442&&selectedStation>=0){
         draft.workstations[selectedStation]={};
         selectedStation=-1;
+        workstationAddOpen=false;
         populateSettings();
         settingsError(L"Workstation removed from the draft. Save changes to finish.");
         return true;
@@ -261,15 +228,75 @@ static bool workstationCommand(HWND window,int id,int notification){
         updateSpotifySettings();
         return true;
     }
-    if(id>=460&&id<468&&selectedStation>=0){
-        bool clear=id>=464;
-        int index=id-(clear?464:460);
+    if(selectedStation<0||notification!=BN_CLICKED)return false;
+    auto& station=draft.workstations[selectedStation];
+    if(id==stationAdd){
+        if(readWorkstationDraft()){
+            workstationAddOpen=!workstationAddOpen;
+            populateSettings();
+            SetFocus(GetDlgItem(window,stationAdd));
+        }
+        return true;
+    }
+
+    int apps=stationAppCount(station),tabs=stationWebsiteCount(station);
+    if((id==stationAppChoice&&apps<workstationApps)||(id>=stationAppBase&&id<stationAppBase+apps)){
+        if(!readWorkstationDraft())return true;
+        int slot=id==stationAppChoice?apps:id-stationAppBase;
         AppTarget chosen={};
-        if(clear||pickTarget(chosen)){
-            draft.workstations[selectedStation].apps[index]=chosen;
-            wchar_t empty[36];swprintf_s(empty,L"Choose app %d…",index+1);
-            SetDlgItemText(window,460+index,chosen.path[0]?chosen.name:empty);
-            EnableWindow(GetDlgItem(window,464+index),chosen.path[0]!=0);
+        if(pickTarget(chosen)){
+            station.apps[slot]=chosen;
+            refreshWorkstation(stationAppBase+slot);
+        }
+        return true;
+    }
+    if((id==stationWebsiteChoice&&tabs<workstationTabs)||(id>=stationTabBase&&id<stationTabBase+tabs)){
+        if(!readWorkstationDraft())return true;
+        int slot=id==stationWebsiteChoice?tabs:id-stationTabBase;
+        WorkstationLinkDialog::Selection selection={};
+        wcscpy_s(selection.value,station.tabs[slot]);
+        if(WorkstationLinkDialog::show(window,selection)){
+            wcscpy_s(station.tabs[slot],selection.value);
+            refreshWorkstation(stationTabBase+slot);
+        }
+        return true;
+    }
+    if(id==stationSpotifyChoice||id==stationSpotifyEdit){
+        if(!readWorkstationDraft())return true;
+        WorkstationLinkDialog::Selection selection={true};
+        if(station.spotify[0]){
+            wchar_t url[80];
+            LaunchTargets::spotifyAddress(station.spotify,url);
+            wcscpy_s(selection.value,url);
+        }
+        if(WorkstationLinkDialog::show(window,selection)){
+            wcscpy_s(station.spotify,selection.value);
+            refreshWorkstation(stationSpotifyEdit);
+        }
+        return true;
+    }
+    if(id>=stationRemoveAppBase&&id<stationRemoveAppBase+apps){
+        if(readWorkstationDraft()){
+            int slot=id-stationRemoveAppBase;
+            for(int i=slot;i+1<apps;i++)station.apps[i]=station.apps[i+1];
+            station.apps[apps-1]={};
+            refreshWorkstation(slot+1<apps?stationAppBase+slot:stationAdd);
+        }
+        return true;
+    }
+    if(id>=stationRemoveTabBase&&id<stationRemoveTabBase+tabs){
+        if(readWorkstationDraft()){
+            int slot=id-stationRemoveTabBase;
+            for(int i=slot;i+1<tabs;i++)wcscpy_s(station.tabs[i],station.tabs[i+1]);
+            station.tabs[tabs-1][0]=0;
+            refreshWorkstation(slot+1<tabs?stationTabBase+slot:stationAdd);
+        }
+        return true;
+    }
+    if(id==stationSpotifyRemove){
+        if(readWorkstationDraft()){
+            station.spotify[0]=0;
+            refreshWorkstation(stationAdd);
         }
         return true;
     }

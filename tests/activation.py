@@ -13,6 +13,7 @@ def launch():
     time.sleep(.45)
 h=window();assert h,'The Windows shortcut did not launch the app'
 assert expanded(h),'The Windows shortcut launched the app without opening it'
+assert not u.SendMessageW(h,0x8053,0,0),'Launch shortcut automatically pinned the island'
 launch();assert window()==h and not expanded(h),'Running instance did not hide'
 launch();assert window()==h and expanded(h),'Running instance did not open'
 u.SendMessageW(h,0x312,3,0);assert u.SendMessageW(h,0x8004,0,0)==1
@@ -28,7 +29,8 @@ for _ in range(80):
     if h and expanded(h):break
     time.sleep(.1)
 assert h and expanded(h),'Relaunch did not open the island'
-result={'windowsShortcutLaunchedFromQuit':True,'toggleExistingInstance':True,'resumePaused':True,'relaunchPinnedOpen':True}
+assert not u.SendMessageW(h,0x8053,0,0),'Relaunch automatically pinned the island'
+result={'windowsShortcutLaunchedFromQuit':True,'toggleExistingInstance':True,'resumePaused':True,'relaunchUnpinned':True}
 print(json.dumps(result,indent=2))
 Path(__file__).with_name('activation-result.json').write_text(json.dumps(result,indent=2))
 # Leave running in the default hover-only state.

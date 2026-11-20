@@ -58,8 +58,8 @@ try:
  def island_click(x,y):
   point=(int(y*scale)<<16)|int(x*scale)
   u.SendMessageW(main,0x201,1,point);u.SendMessageW(main,0x202,0,point)
- island_click(560,30);assert u.SendMessageW(main,0x8003,0,0)==9,'Connector toolbar did not open feed'
- island_click(320,118)
+ island_click(522,27);assert u.SendMessageW(main,0x8003,0,0)==9,'Mail tile did not open feed'
+ island_click(175,124)
  check(610,False);click(9002)
  wait_for(lambda:u.SendMessageW(main,0x805d,0,0)==0,'Disabling Android did not clear notifications')
  click(8411);assert item(615) and item(617) and item(618);check(615,True)

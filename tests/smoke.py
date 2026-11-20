@@ -12,6 +12,8 @@ u.FindWindowW.argtypes=[w.LPCWSTR,w.LPCWSTR]
 u.SendMessageW.restype=c.c_ssize_t
 u.SendMessageW.argtypes=[w.HWND,w.UINT,w.WPARAM,w.LPARAM]
 u.GetWindowRect.argtypes=[w.HWND,c.POINTER(w.RECT)]
+u.GetCursorPos.argtypes=[c.POINTER(w.POINT)]
+u.SetCursorPos.argtypes=[c.c_int,c.c_int]
 u.IsWindowVisible.argtypes=[w.HWND]
 u.PostMessageW.argtypes=[w.HWND,w.UINT,w.WPARAM,w.LPARAM]
 root=Path(__file__).resolve().parents[1]
@@ -37,17 +39,26 @@ try:
     for offset in range(collapsed[1]):
         assert u.WindowFromPoint(w.POINT((bounds.left+bounds.right)//2,bounds.top+offset))==h, 'Invisible hover target does not receive real pointer input'
 
-    u.SendMessageW(h,0x200,0,(1<<16)|80)
-    u.SendMessageW(h,0x113,5,0)
-    u.SendMessageW(h,0x312,2,0)
-    time.sleep(.65)
-    assert size()[0]>collapsed[0], 'Top-edge hover did not open'
+    cursor=w.POINT()
+    assert u.GetCursorPos(c.byref(cursor))
+    try:
+        assert u.SetCursorPos((bounds.left+bounds.right)//2,bounds.top+(collapsed[1]//2))
+        for _ in range(20):
+            if u.SendMessageW(h,0x8008,0,0):break
+            time.sleep(.04)
+        assert u.SendMessageW(h,0x8008,0,0),'Top-edge hover did not start opening'
+        assert not u.SendMessageW(h,0x8053,0,0),'Hovering pinned the island'
+    finally:
+        u.SetCursorPos(cursor.x,cursor.y)
     u.SendMessageW(h,0x2A3,0,0)
     u.SendMessageW(h,0x100,0x1B,0)
     time.sleep(.4)
-    u.SendMessageW(h,0x312,2,0) # expand and pin, uses the real animation
+    u.SendMessageW(h,0x312,2,0) # expand using the real animation
     time.sleep(.08); intermediate=size()
     time.sleep(.55); expanded=size()
+    assert not u.SendMessageW(h,0x8053,0,0),'Opening the island automatically pinned it'
+    click(470,27)
+    assert u.SendMessageW(h,0x8053,0,0),'Pin tile did not pin the island'
     material_ms=u.SendMessageW(h,0x8006,0,0)
     assert expanded[0] <= 500*u.GetDpiForWindow(h)/96, 'Compact overlay is too wide at test scale'
     time.sleep(.8)
@@ -70,7 +81,7 @@ try:
 
     assert_animations_settle(0)
     for index,tab in enumerate((0,1,2,3,5,6,7,10)):
-        click(141+index*54,26)
+        click(54+index*52,27)
         assert u.SendMessageW(h,0x8003,0,0)==tab, f'Tab {tab} did not activate'
         if tab==3:
             click(620,88)
@@ -80,16 +91,30 @@ try:
         if tab==7:
             sheet=u.FindWindowW('WinPixelSettings',None);assert sheet,'Full settings window did not open'
             u.SendMessageW(sheet,0x10,0,0)
+            click(103,179)
+            sheet=u.FindWindowW('WinPixelSettings',None)
+            assert sheet and u.SendMessageW(h,0x8050,0,0)==0,'Open settings tile did not open Appearance'
+            u.SendMessageW(sheet,0x10,0,0)
+            click(245,179)
+            sheet=u.FindWindowW('WinPixelSettings',None)
+            assert sheet and u.SendMessageW(h,0x8050,0,0)==4,'Quick note tile did not open Notes'
+            u.SendMessageW(sheet,0x10,0,0)
         assert_animations_settle(tab)
-    click(561,30)
-    assert u.SendMessageW(h,0x8003,0,0)==9, 'Connectors toolbar button did not activate'
-    click(617,29)
+    click(522,27)
+    assert u.SendMessageW(h,0x8003,0,0)==9, 'Mail toolbar button did not activate'
+    for x,settings_page in ((175,6),(271,7),(79,5)):
+        click(x,124)
+        click(621,81)
+        sheet=u.FindWindowW('WinPixelSettings',None)
+        assert sheet and u.SendMessageW(h,0x8050,0,0)==settings_page,'Feed tile selected the wrong settings'
+        u.SendMessageW(sheet,0x10,0,0)
+    click(574,27)
     assert u.SendMessageW(h,0x8003,0,0)==8
     click(450,170) # Solid material
     assert u.SendMessageW(h,0x8007,0,0)==0, 'Solid kept the optical background'
     click(170,170) # Glass material
     assert u.SendMessageW(h,0x8007,0,0)==1, 'Switching back to Glass did not capture the backdrop'
-    click(141,26)
+    click(54,27)
     assert u.SendMessageW(h,0x8003,0,0)==0
     def point(x,y):
         scale=(expanded[0]/1.025)/680

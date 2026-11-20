@@ -10,7 +10,7 @@ struct Entry {
     HICON icon=nullptr;
     Bitmap* image=nullptr;
 };
-static Entry entries[4];
+static Entry entries[appLimit];
 
 static HICON shellIcon(const wchar_t* item,UINT flags=0){
     SHFILEINFO info={};
@@ -147,6 +147,56 @@ static void release(Entry& entry){
     if(entry.icon)DestroyIcon(entry.icon);
     entry={};
 }
+static Bitmap* transparentImage(HICON icon){
+    ICONINFO info={};
+    if(!GetIconInfo(icon,&info))return nullptr;
+    BITMAP native={};
+    const HBITMAP image=info.hbmColor?info.hbmColor:info.hbmMask;
+    const bool measured=GetObject(image,sizeof(native),&native)==sizeof(native);
+    if(info.hbmColor)DeleteObject(info.hbmColor);
+    if(info.hbmMask)DeleteObject(info.hbmMask);
+    const int w=native.bmWidth,h=info.hbmColor?native.bmHeight:native.bmHeight/2;
+    if(!measured||w<=0||h<=0)return nullptr;
+
+    // Recover coverage from two backgrounds. This also handles legacy AND masks.
+    BITMAPINFO format={};
+    format.bmiHeader={sizeof(BITMAPINFOHEADER),w,-h,1,32,BI_RGB};
+    DWORD* pixels=nullptr;
+    HDC dc=CreateCompatibleDC(nullptr);
+    HBITMAP canvas=dc?CreateDIBSection(dc,&format,DIB_RGB_COLORS,(void**)&pixels,nullptr,0):nullptr;
+    HGDIOBJ old=canvas?SelectObject(dc,canvas):nullptr;
+    Bitmap* result=nullptr;
+    if(old&&old!=HGDI_ERROR){
+        auto* bitmap=new Bitmap(w,h,PixelFormat32bppPARGB);
+        BitmapData data={};
+        const Rect region(0,0,w,h);
+        if(bitmap->LockBits(&region,ImageLockModeWrite,PixelFormat32bppPARGB,&data)==Ok){
+            ZeroMemory(pixels,(size_t)w*h*sizeof(DWORD));
+            bool drawn=DrawIconEx(dc,0,0,icon,w,h,0,nullptr,DI_NORMAL)!=FALSE;
+            GdiFlush();
+            for(int y=0;y<h;y++)memcpy((BYTE*)data.Scan0+y*data.Stride,pixels+y*w,w*sizeof(DWORD));
+            memset(pixels,255,(size_t)w*h*sizeof(DWORD));
+            drawn=DrawIconEx(dc,0,0,icon,w,h,0,nullptr,DI_NORMAL)&&drawn;
+            GdiFlush();
+            for(int y=0;y<h;y++){
+                DWORD* row=(DWORD*)((BYTE*)data.Scan0+y*data.Stride);
+                for(int x=0;x<w;x++){
+                    DWORD black=row[x],white=pixels[y*w+x];
+                    int transparent=(int)(white&255)-(int)(black&255);
+                    const BYTE alpha=(BYTE)(255-(transparent>0?transparent:0));
+                    row[x]=((DWORD)alpha<<24)|(black&0xffffff);
+                }
+            }
+            bitmap->UnlockBits(&data);
+            if(drawn)result=bitmap;
+        }
+        if(!result)delete bitmap;
+        SelectObject(dc,old);
+    }
+    if(canvas)DeleteObject(canvas);
+    if(dc)DeleteDC(dc);
+    return result;
+}
 static Bitmap* image(Entry& entry,const wchar_t* target){
     if(wcscmp(entry.target,target)){
         release(entry);
@@ -158,7 +208,7 @@ static Bitmap* image(Entry& entry,const wchar_t* target){
         }
         entry.icon=resolve(target);
         if(!entry.icon)entry.icon=CopyIcon(LoadIcon(nullptr,IDI_APPLICATION));
-        if(entry.icon)entry.image=Bitmap::FromHICON(entry.icon);
+        if(entry.icon)entry.image=transparentImage(entry.icon);
     }
     return entry.image;
 }

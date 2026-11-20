@@ -17,7 +17,7 @@ static LONG working=0;
 struct Job {
     HWND window;
     bool signIn;
-    wchar_t credential[132],track[23];
+    wchar_t credential[132],spotify[spotifyUriSize];
 };
 static bool configured(){return clientId[0]!=0;}
 static bool busy(){return InterlockedCompareExchange(&working,0,0)!=0;}
@@ -159,9 +159,10 @@ static const wchar_t* play(const Job& job){
        ConnectorNet::encode(refresh,encoded,ARRAYSIZE(encoded))){
         sprintf_s(form,"grant_type=refresh_token&client_id=%s&refresh_token=%s",clientId,encoded);
         if(token(form,job.credential,access,false)&&!stopping()){
-            char track[23],json[64];
-            ConnectorNet::utf8(job.track,track,ARRAYSIZE(track));
-            sprintf_s(json,"{\"uris\":[\"spotify:track:%s\"]}",track);
+            char uri[spotifyUriSize],json[100];
+            ConnectorNet::utf8(job.spotify,uri,ARRAYSIZE(uri));
+            if(LaunchTargets::spotifyPlaylist(job.spotify))sprintf_s(json,"{\"context_uri\":\"%s\"}",uri);
+            else sprintf_s(json,"{\"uris\":[\"%s\"]}",uri);
             ConnectorNet::Response response;
             ConnectorNet::request(L"api.spotify.com",L"/v1/me/player/play",L"PUT",json,access,response,stopEvent,L"application/json");
             status=response.status;
@@ -173,9 +174,9 @@ static const wchar_t* play(const Job& job){
     SecureZeroMemory(access,sizeof(access));
     if(status==204)return L"Spotify playback started.";
     if(stopping())return L"";
-    if(!LaunchTargets::openTrack(job.window,job.track))return L"Spotify couldn’t play or open the track.";
-    return status==404?L"Track opened. Start an active Spotify device for autoplay.":
-                       L"Track opened. Spotify couldn’t start playback automatically.";
+    if(!LaunchTargets::openSpotifyItem(job.window,job.spotify))return L"Spotify couldn’t play or open the Spotify item.";
+    return status==404?L"Spotify item opened. Start an active Spotify device for autoplay.":
+                       L"Spotify item opened. Spotify couldn’t start playback automatically.";
 }
 static DWORD WINAPI run(void* data){
     Job job=*(Job*)data;
@@ -189,7 +190,7 @@ static DWORD WINAPI run(void* data){
     if(notify)PostMessage(job.window,finishedMessage,job.signIn,(LPARAM)message);
     return 0;
 }
-static bool start(HWND window,const wchar_t* profile,const wchar_t* track=nullptr){
+static bool start(HWND window,const wchar_t* profile,const wchar_t* spotify=nullptr){
     if(!configured()||busy())return false;
     if(worker){CloseHandle(worker);worker=nullptr;}
     if(!stopEvent)stopEvent=CreateEvent(nullptr,TRUE,FALSE,nullptr);
@@ -198,8 +199,8 @@ static bool start(HWND window,const wchar_t* profile,const wchar_t* track=nullpt
     if(!job)return false;
     if(!credentialName(profile,job->credential)){HeapFree(GetProcessHeap(),0,job);return false;}
     job->window=window;
-    job->signIn=track==nullptr;
-    if(track)wcscpy_s(job->track,track);
+    job->signIn=spotify==nullptr;
+    if(spotify)wcscpy_s(job->spotify,spotify);
     InterlockedExchange(&working,1);
     worker=CreateThread(nullptr,0,run,job,0,nullptr);
     if(worker)return true;

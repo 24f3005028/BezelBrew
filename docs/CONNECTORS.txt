@@ -60,7 +60,7 @@ BezelBrew does not import Phone Link's private notification feed.
 
 DISCORD
 Open the Discord desktop window and join a voice channel. In BezelBrew, choose
-Connectors > Discord > Toggle Discord mute. BezelBrew switches to Discord and
+Mail > Discord > Toggle mute. BezelBrew switches to Discord and
 sends Ctrl+Shift+M. Your current channel and mute state are visible in Discord.
 
 Privacy and background use

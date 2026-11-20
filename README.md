@@ -40,11 +40,18 @@ about 300 ms and disappears when you move away (180 ms grace, 220 ms close).
 A roughly 220-by-7-pixel, nearly invisible strip at the top center detects hover
 at 100% display scaling. Its mouse-hit opacity is kept above zero.
 
-- The island toolbar opens Music, Shelf, Clipboard, Widgets, Launcher, Focus,
-  Settings, Workstations, Connectors, and Appearance. Hover over an icon to
+- The island's square tiles open Music, Shelf, Clipboard, Widgets, Apps, Focus,
+  Settings, Workstations, Mail, and Appearance. Hover over an icon to
   see its name. Use the droplet icon to switch between Glass and Solid.
   Settings > Appearance lets you customize the text color and the active
   material's background or tint.
+- **Clear memory** lists supported background apps before closing them.
+  Minimized or hidden WhatsApp, CurseForge, Discord, Telegram, and Slack can
+  be closed. Chrome and Edge are also included while their windows are open.
+  BezelBrew asks the browser to close normally before ending leftover processes.
+  It skips visible chat and launcher windows, Windows processes, and other users' apps.
+  File Explorer folder windows and standard Task Manager windows are closed normally.
+  The Windows shell stays running. Codex window closure is optional in the confirmation.
 - Appearance settings: smooth animations, top-edge notch shape, or floating
   rounded shape. Keep open is optional and off by default.
 - In Settings > Appearance, name the current look and select **Save theme**.
@@ -59,14 +66,19 @@ at 100% display scaling. Its mouse-hit opacity is kept above zero.
 
 ## Available tools
 
-**Launchers and Workstations.** In Settings > Launchers, choose an installed app,
-enter a website, or browse to an existing Windows or Chrome shortcut. You can
-save up to six Workstations in Settings > Workstations, each with four apps or shortcuts, four web
-addresses, and an optional Spotify track. Run, add, and edit them from the island’s
+**Apps and Workstations.** In Settings > Apps, add up to 32 installed apps,
+websites, files, folders, or shortcuts. Select a card to edit its name or
+destination. Scroll vertically in the island's Apps grid to reach more shortcuts.
+You can save up to six Workstations in Settings > Workstations. Use **Add item**
+to add apps, websites, or Spotify music. Each workstation can hold up to 16 apps
+or shortcuts, 16 websites, and one track or playlist. Run, add, and edit them from the island’s
 Workstations tab. The tray also has a Quick Open menu item. Web addresses open together in a
 new Chrome window when Chrome is installed, or in the default browser otherwise.
 
-Spotify track links open in Spotify by default. To enable automatic playback
+To select music, choose **Spotify track or playlist**, open Spotify, and use
+**Share > Copy link** on the item you want. Paste the link into BezelBrew and
+select **Use selection**. The standard build opens the item in Spotify.
+To enable automatic playback
 in a publisher build, register `http://127.0.0.1/spotify/callback` in the Spotify
 app dashboard and build with `./build.ps1 -SpotifyClientId <public-client-id>`.
 Allowed Spotify Premium users can then connect in the Workstations editor.
@@ -90,7 +102,7 @@ Captures text while running, including potentially sensitive copied text.
 Memory only; history is never saved to disk.
 
 **Widgets:** local clock, CPU utilization, and physical RAM utilization.
-**Launcher:** Explorer, Windows Settings, Calculator, Notepad.
+**Apps:** File Explorer, Windows Settings, Calculator, and Notepad are included by default.
 **Focus:** a 25-minute session with a Windows completion notification.
 
 ## Lightweight by design
@@ -154,10 +166,9 @@ specular highlights. The renderer blends in the selected tint and applies
 contrast shading based on the selected text color. Cards and buttons let the
 backdrop show through, while text and icons stay opaque.
 
-**The background is a snapshot refreshed on each opening.** Changes behind the
-panel are not continuously captured while it stays open. This bounds memory and
-avoids idle capture/GPU activity. Samples are never written to disk or sent
-anywhere, and all material buffers are freed on collapse, pause, or exit.
+The background is sampled on opening and refreshed when you switch the
+foreground window while the island stays open. Samples are held in memory
+and released on collapse, pause, or exit.
 
 This is an independent approximation of optical glass, not Apple's proprietary
 Liquid Glass compositor. The native transition uses a stable backing surface,
@@ -209,7 +220,7 @@ there is no animation clock activity while hidden.
 
 Drag the panel content left to advance, or right to go back. The page follows
 the drag, then slides into place; short or canceled drags return to the
-original page. Music, Shelf, Clipboard, Widgets, Launcher, Focus, Workstations and
+original page. Music, Shelf, Clipboard, Widgets, Apps, Focus, Workstations and
 Settings form a circular sequence. The toolbar remains fixed.
 
 Horizontal touchpad scrolling and Shift + mouse wheel also change sections.

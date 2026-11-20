@@ -1,5 +1,5 @@
 #pragma once
-// Bounded, opening-time optical glass. No capture thread or idle polling.
+// Bounded optical glass. No capture thread or sampling while collapsed.
 namespace OpticalGlass {
 struct Pixel { unsigned char b,g,r,a; };
 static Pixel *source=0,*scratch=0,*surface=0;
@@ -67,12 +67,15 @@ static void render(){
     info={};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);info.bmiHeader.biWidth=w;info.bmiHeader.biHeight=-h;info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;info.bmiHeader.biCompression=BI_RGB;
 }
 static bool capture(int x,int y,int w,int h){
-    LARGE_INTEGER a,b,f;QueryPerformanceCounter(&a);QueryPerformanceFrequency(&f);
     if(!allocate(w,h))return false;
     originX=x;originY=y;
     BITMAPINFO mini={};mini.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);mini.bmiHeader.biWidth=w;mini.bmiHeader.biHeight=-h;mini.bmiHeader.biPlanes=1;mini.bmiHeader.biBitCount=32;mini.bmiHeader.biCompression=BI_RGB;
-    HDC screen=GetDC(0),memory=CreateCompatibleDC(screen);void* bits=0;HBITMAP image=CreateDIBSection(screen,&mini,DIB_RGB_COLORS,&bits,0,0);HGDIOBJ old=SelectObject(memory,image);SetStretchBltMode(memory,HALFTONE);
-    bool ok=image&&bits&&BitBlt(memory,0,0,w,h,screen,x,y,SRCCOPY|CAPTUREBLT);
+    HDC screen=GetDC(nullptr);
+    HDC memory=screen?CreateCompatibleDC(screen):nullptr;
+    void* bits=nullptr;
+    HBITMAP image=memory?CreateDIBSection(screen,&mini,DIB_RGB_COLORS,&bits,nullptr,0):nullptr;
+    HGDIOBJ old=image?SelectObject(memory,image):nullptr;
+    bool ok=old&&old!=HGDI_ERROR&&bits&&BitBlt(memory,0,0,w,h,screen,x,y,SRCCOPY|CAPTUREBLT);
     GdiFlush();
     if(ok){
         auto* input=(Pixel*)bits;
@@ -83,11 +86,12 @@ static bool capture(int x,int y,int w,int h){
                              (BYTE)((a.r+b.r+c.r+d.r)/4),255};
         }
     }
-    SelectObject(memory,old);DeleteObject(image);DeleteDC(memory);ReleaseDC(0,screen);
-    if(!ok){release();return false;}
-    render();
-    QueryPerformanceCounter(&b);renderMs=1000.0*(b.QuadPart-a.QuadPart)/f.QuadPart;
-    return true;
+    if(old&&old!=HGDI_ERROR)SelectObject(memory,old);
+    if(image)DeleteObject(image);
+    if(memory)DeleteDC(memory);
+    if(screen)ReleaseDC(nullptr,screen);
+    if(!ok)release();
+    return ok;
 }
 static void paint(HDC dc){if(surface)SetDIBitsToDevice(dc,0,0,width,height,0,0,0,height,surface,&info,DIB_RGB_COLORS);}
 }

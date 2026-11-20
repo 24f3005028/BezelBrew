@@ -1,6 +1,7 @@
 #pragma once
 // A native, keyboard-accessible settings window. Drafts are applied explicitly.
 constexpr int workstationSettingsPage=9;
+constexpr int appCardBase=8700;
 constexpr int settingsPageCount=10;
 constexpr int settingsNavigationOrder[]={0,1,2,3,workstationSettingsPage,4,5,6,7,8};
 static int settingsNavigationRow(int page){return page==workstationSettingsPage?4:page>=4?page+1:page;}
@@ -68,8 +69,9 @@ static bool selectFile(HWND owner,const COMDLG_FILTERSPEC* filters,UINT count,wc
         return false;
     FILEOPENDIALOGOPTIONS options=0;
     dialog->GetOptions(&options);
-    dialog->SetOptions(options|FOS_FORCEFILESYSTEM|FOS_FILEMUSTEXIST|FOS_PATHMUSTEXIST|FOS_NOCHANGEDIR|extraOptions);
-    dialog->SetFileTypes(count,filters);
+    dialog->SetOptions(options|FOS_FORCEFILESYSTEM|FOS_PATHMUSTEXIST|FOS_NOCHANGEDIR|extraOptions|
+                       ((extraOptions&FOS_PICKFOLDERS)?0:FOS_FILEMUSTEXIST));
+    if(count)dialog->SetFileTypes(count,filters);
     bool selected=false;
     IShellItem* file=nullptr;
     if(SUCCEEDED(dialog->Show(owner))&&SUCCEEDED(dialog->GetResult(&file))){
@@ -94,6 +96,7 @@ static bool checked(int id){return SendDlgItemMessage(settingsWindow,id,BM_GETCH
 static void settingsError(const wchar_t* text){SetWindowText(settingsMessage,text);}
 static bool number(int id,int& destination,int low,int high){wchar_t text[32];GetDlgItemText(settingsWindow,id,text,32);wchar_t* end=0;long value=wcstol(text,&end,10);if(!text[0]||!end||*end||value<low||value>high){wchar_t message[130];swprintf_s(message,L"Enter a value between %d and %d.",low,high);settingsError(message);SetFocus(GetDlgItem(settingsWindow,id));return false;}destination=(int)value;return true;}
 #include "workstation_settings.hpp"
+#include "apps_settings.hpp"
 #include "theme_settings.hpp"
 static bool readDraft(){
     if(settingsPage==0){
@@ -131,7 +134,7 @@ static bool readDraft(){
     }
     if(settingsPage==1){int index=(int)SendDlgItemMessage(settingsWindow,201,CB_GETCURSEL,0,0);draft.monitor[0]=0;if(index>0&&index<=monitorCount)wcscpy_s(draft.monitor,monitors[index-1].device);draft.alignment=(int)SendDlgItemMessage(settingsWindow,202,CB_GETCURSEL,0,0);if(!number(203,draft.offset,-600,600)||!number(205,draft.hoverWidth,80,500)||!number(206,draft.hoverHeight,4,24)||!number(207,draft.hoverDelay,20,1000)||!number(208,draft.closeDelay,100,2000))return false;draft.hoverEnabled=checked(204);int indexSpeed=(int)SendDlgItemMessage(settingsWindow,209,CB_GETCURSEL,0,0);int speeds[]={180,300,450};draft.animationMs=speeds[indexSpeed<0?1:indexSpeed];}
     if(settingsPage==2){int index=(int)SendDlgItemMessage(settingsWindow,301,CB_GETCURSEL,0,0);if(index>=0&&index<primaryTabCount){int page=primaryPage(index);draft.defaultTab=page==workstationPage?8:page;}draft.waveformEnabled=checked(302);draft.swipeEnabled=checked(303);draft.clipboardEnabled=checked(304);draft.automaticBreak=checked(308);draftStartup=checked(309);if(!number(305,draft.historyLimit,1,12)||!number(306,draft.focusMinutes,5,120)||!number(307,draft.breakMinutes,1,60))return false;}
-    if(settingsPage==3&&!readShortcutDraft())return false;
+    if(settingsPage==3&&!readAppDraft())return false;
     if(settingsPage==workstationSettingsPage&&!readWorkstationDraft())return false;
     if(settingsPage==4)GetDlgItemText(settingsWindow,501,draft.note,2048);
     if(settingsPage==5){if(GetDlgItem(settingsWindow,601))draft.gmailEnabled=checked(601);if(GetDlgItem(settingsWindow,602))draft.gmailUnreadOnly=checked(602);if(GetDlgItem(settingsWindow,605)&&!number(605,draft.gmailRefresh,60,900))return false;}
@@ -167,6 +170,8 @@ static void updateConnectorStatus(){
     if(settingsPage==6&&iphoneSetup)SetDlgItemText(settingsWindow,618,connectorView.iphoneStatus[0]?connectorView.iphoneStatus:L"Follow the three steps, then check your connection.");
 }
 static void populateSettings(){
+    if(settingsPage!=3)editingApp=-1;
+    if(settingsPage!=workstationSettingsPage)workstationAddOpen=false;
     SettingsSkin::scroll=0;
     for(int i=0;i<settingsControlCount;i++)DestroyWindow(settingsControls[i]);settingsControlCount=0;settingsError(L"");
     ShowWindow(GetDlgItem(settingsWindow,9001),settingsPage==0?SW_SHOW:SW_HIDE);
@@ -213,7 +218,7 @@ static void populateSettings(){
 
     if(settingsPage==1){HWND displays=combo(201,L"Display",142);choice(displays,L"Automatic - current display");monitorCount=0;EnumDisplayMonitors(0,0,collectMonitors,0);int selectedMonitor=0;for(int i=0;i<monitorCount;i++){choice(displays,monitors[i].label);if(!_wcsicmp(draft.monitor,monitors[i].device))selectedMonitor=i+1;}SendMessage(displays,CB_SETCURSEL,selectedMonitor,0);HWND align=combo(202,L"Position",183);const wchar_t* alignNames[]={L"Top left",L"Top center",L"Top right"};for(auto name:alignNames)choice(align,name);SendMessage(align,CB_SETCURSEL,draft.alignment,0);editNumber(203,L"Horizontal offset (px)",224,draft.offset);checkbox(204,L"Open when the pointer rests on the top edge",265,draft.hoverEnabled);editNumber(205,L"Hover target width (px)",305,draft.hoverWidth);editNumber(206,L"Hover target height (px)",345,draft.hoverHeight);editNumber(207,L"Hover delay (ms)",385,draft.hoverDelay);editNumber(208,L"Close delay (ms)",425,draft.closeDelay);HWND speed=combo(209,L"Animation speed",465);choice(speed,L"Fast (180 ms)");choice(speed,L"Balanced (300 ms)");choice(speed,L"Relaxed (450 ms)");SendMessage(speed,CB_SETCURSEL,draft.animationMs<240?0:draft.animationMs>375?2:1,0);}
     if(settingsPage==2){HWND section=combo(301,L"Starting section",140);for(auto name:tabNames)choice(section,name);SendMessage(section,CB_SETCURSEL,primaryIndex(startupPage(draft.defaultTab)),0);checkbox(302,L"Animate the song waveform",181,draft.waveformEnabled);checkbox(303,L"Swipe and scroll horizontally between sections",216,draft.swipeEnabled);checkbox(304,L"Capture copied text (turning off clears history)",251,draft.clipboardEnabled);editNumber(305,L"Clipboard entries",291,draft.historyLimit);editNumber(306,L"Focus duration (minutes)",331,draft.focusMinutes);editNumber(307,L"Break duration (minutes)",371,draft.breakMinutes);checkbox(308,L"Start a break automatically after focus ends",411,draft.automaticBreak);checkbox(309,L"Start automatically when I sign in to Windows",451,draftStartup);}
-    if(settingsPage==3)launcherSettings();
+    if(settingsPage==3)appsSettings();
     if(settingsPage==workstationSettingsPage)workstationSettings();
     if(settingsPage==4){control(WC_STATIC,L"A private scratchpad, saved locally with your settings. Up to 2,047 characters.",0,38,142,660,30);HWND note=control(WC_EDIT,draft.note,501,38,182,650,310,ES_MULTILINE|ES_AUTOVSCROLL|ES_WANTRETURN|WS_VSCROLL|WS_TABSTOP);SendMessage(note,EM_SETLIMITTEXT,2047,0);}
     if(settingsPage==8){control(WC_STATIC,L"Ctrl + Alt + N\r\nOpen or hide the island, even after Quit.\r\n\r\nWin + Alt + N\r\nPause for 30 minutes, or resume immediately.\r\n\r\nSwipe left/right or use Shift + mouse wheel to change sections.\r\nThe startup and launch shortcut can be installed with install-startup.ps1.\r\nGlass refreshes its background sample each time the island opens.",0,38,146,660,340);}
@@ -305,11 +310,12 @@ static bool applySettings(){
     if(wcscmp(prefs.gmailClientId,draft.gmailClientId)){Connectors::disconnect();}
     if(pendingClientSecret[0]){if(!Connectors::storeClientSecret(pendingClientSecret)){settingsError(L"Windows could not save the Google client credential. Nothing was applied.");return false;}SecureZeroMemory(pendingClientSecret,sizeof(pendingClientSecret));}
     bool wasCapture=prefs.clipboardEnabled;prefs=draft;
+    scrollApps(0);
     SetWindowText(win,appName());wchar_t captionText[96];swprintf_s(captionText,L"%s Settings",appName());SetWindowText(settingsWindow,captionText);swprintf_s(tray.szTip,paused?L"%s paused - Win+Alt+N to resume":L"%s - right-click for menu",appName());tray.uFlags=NIF_TIP;Shell_NotifyIcon(NIM_MODIFY,&tray);excludeOverlayFromShell(win);InvalidateRect(settingsWindow,0,FALSE);animations=draftAnimations;docked=draftDocked;
     uiScale=.55*prefs.sizePercent/100.0;smallWidth=prefs.hoverWidth/uiScale;smallHeight=prefs.hoverHeight/uiScale;
     if(!prefs.clipboardEnabled&&wasCapture){SecureZeroMemory(clips,sizeof(clips));clipCount=0;}if(clipCount>prefs.historyLimit){for(int i=prefs.historyLimit;i<12;i++)SecureZeroMemory(clips[i],sizeof(clips[i]));clipCount=prefs.historyLimit;}scrollOffset=0;
     moving=tabMoving=hoverMoving=false;openness=fromOpen=toOpen=expanded?1:0;tabReveal=hoverReveal=1;swiping=swipeCandidate=false;
-    OpticalGlass::release();releaseBuffer();createFonts();setupTooltips();place();animationTimer();repaint();saveSettings();configureConnectors();if(!settingsSaveSucceeded){settingsError(L"Applied for now, but the settings file could not be saved. Check folder permissions.");return false;}if(settingsPage==workstationSettingsPage)populateSettings();settingsError(L"Changes saved.");return true;
+    OpticalGlass::release();releaseBuffer();createFonts();setupTooltips();place();animationTimer();repaint();saveSettings();configureConnectors();if(!settingsSaveSucceeded){settingsError(L"Applied for now, but the settings file could not be saved. Check folder permissions.");return false;}if(settingsPage==3)closeAppEditor();else if(settingsPage==workstationSettingsPage)populateSettings();settingsError(L"Changes saved.");return true;
 }
 static void resizeSettings(HWND window){
     RECT r;GetClientRect(window,&r);if(settingsTabs)MoveWindow(settingsTabs,0,0,0,0,TRUE);
@@ -363,7 +369,7 @@ case WM_HSCROLL:{
 }
 case WM_COMMAND:{int id=LOWORD(wp);
 if(id>=8100&&id<8100+settingsPageCount){if(readDraft()){settingsPage=id-8100;TabCtrl_SetCurSel(settingsTabs,settingsPage);populateSettings();}return 0;}
-if(settingsPage==3&&launcherCommand(h,id))return 0;
+if(settingsPage==3&&appsCommand(h,id,HIWORD(wp)))return 0;
 if(settingsPage==workstationSettingsPage&&workstationCommand(h,id,HIWORD(wp)))return 0;
 if(id==8410||id==8411){
     bool iphone=id==8411;
@@ -496,7 +502,7 @@ static bool showSettings(int page=0){
         populateSettings();
         return true;
     }
-    ZeroMemory(connectorAdvanced,sizeof(connectorAdvanced));iphoneSetup=prefs.iphoneEnabled&&!prefs.androidEnabled;settingsDeviceRevision=-1;ZeroMemory(shortcutWebsite,sizeof(shortcutWebsite));selectedStation=-1;draft=prefs;draftAnimations=animations;draftDocked=docked;draftStartup=startupEnabled();matchEquippedTheme();settingsPage=page;
+    ZeroMemory(connectorAdvanced,sizeof(connectorAdvanced));iphoneSetup=prefs.iphoneEnabled&&!prefs.androidEnabled;settingsDeviceRevision=-1;editingApp=-1;appsListScroll=0;selectedStation=-1;workstationAddOpen=false;draft=prefs;draftAnimations=animations;draftDocked=docked;draftStartup=startupEnabled();matchEquippedTheme();settingsPage=page;
     WNDCLASS cls={};cls.lpfnWndProc=settingsProc;cls.hInstance=GetModuleHandle(0);cls.lpszClassName=L"WinPixelSettings";cls.hCursor=LoadCursor(0,IDC_ARROW);cls.hbrBackground=0;cls.hIcon=brandIcon();RegisterClass(&cls);
     MONITORINFO info={sizeof(info)};GetMonitorInfo(MonitorFromWindow(win,MONITOR_DEFAULTTOPRIMARY),&info);settingsDpi=dpi;RECT rect={0,0,D(920),D(720)};AdjustWindowRectEx(&rect,WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,FALSE,WS_EX_APPWINDOW);int width=rect.right-rect.left,height=rect.bottom-rect.top;int available=info.rcWork.bottom-info.rcWork.top-D(20);if(height>available)height=available;
     wchar_t settingsCaption[96];swprintf_s(settingsCaption,L"%s Settings",appName());

@@ -22,10 +22,10 @@ static HDC canvas=0;
 static HBITMAP canvasBitmap=0;
 static HGDIOBJ canvasOld=0;
 static int canvasWidth=0,canvasHeight=0,scroll=0;
-static const wchar_t* sections[]={L"Appearance",L"Behavior",L"Tools",L"Launchers",L"Notes",L"Gmail",L"Phone",L"Discord",L"Shortcuts",L"Workstations"};
+static const wchar_t* sections[]={L"Appearance",L"Behavior",L"Tools",L"Apps",L"Notes",L"Gmail",L"Phone",L"Discord",L"Shortcuts",L"Workstations"};
 static const wchar_t* descriptions[]={
     L"Choose how the desktop island looks.",L"Set where the island appears and how it opens.",
-    L"Configure clipboard history, focus sessions, and startup.",L"Choose the apps and websites shown in Launchers.",
+    L"Configure clipboard history, focus sessions, and startup.",L"Manage the shortcuts shown on the island.",
     L"Edit the quick note shown in Widgets.",L"Manage the inbox shown on the island.",
     L"Set up Android or iPhone notifications.",L"Use Discord’s desktop mute shortcut.",
     L"Keyboard and trackpad controls for the desktop island.",
@@ -225,6 +225,17 @@ static void drawControl(HWND h,HDC dc,Item& model){
         label={D(78),0,w-D(40),hh};
         text(g,dc,value,label,emphasisFont,foreground());
         if(selected)glyph(g,9,w-D(35),(hh-D(18))*.5f,D(18),brand());
+        return;
+    }
+    if(id>=appCardBase&&id<appCardBase+appLimit){
+        int index=id-appCardBase;
+        rect(g,D(1),D(1),w-D(2),hh-D(2),D(9),blend(field(),outline(),hover*.4f),focused?brand():outline());
+        if(Bitmap* image=LauncherIcons::image(index,draft.apps[index].path)){
+            g.SetInterpolationMode(InterpolationModeHighQualityBicubic);
+            g.DrawImage(image,RectF(D(13),(hh-D(25))*.5f,D(25),D(25)));
+        }
+        text(g,dc,value,RECT{D(48),0,w-D(60),hh},bodyFont,foreground());
+        text(g,dc,L"Edit",RECT{w-D(52),0,w-D(15),hh},smallFont,muted(),DT_SINGLELINE|DT_VCENTER|DT_RIGHT);
         return;
     }
     for(const auto& color:appearanceColors){

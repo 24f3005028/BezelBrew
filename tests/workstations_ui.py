@@ -105,7 +105,7 @@ def show_workstations(main,settings):
     if not send(main,0x8008):
         send(main,0x803C)
     time.sleep(.15)
-    island_click(main,520,27)
+    island_click(main,418,27)
     wait_for(lambda:send(main,0x8003)==10,'Dedicated Workstations tab did not open')
     time.sleep(.1)
 
@@ -115,12 +115,27 @@ def editor():
     assert send(main,0x8050)==9,'Editor did not open on the dedicated Settings page'
     return settings
 
+def add_item(settings,choice):
+    if not u.GetDlgItem(settings,choice):
+        command(settings,443)
+    item(settings,choice)
+
+def pick_link(settings,control,title,value):
+    u.PostMessageW(settings,0x111,control,0)
+    picker=dialog(title)
+    set_text(picker,2320,value)
+    command(picker,1)
+    wait_for(lambda:not owned_dialog(title),f'{title} did not accept the selection')
+
 p,main,settings=launch()
 try:
+    command(settings,8700)
     choose_app(settings,430)
     assert text(settings,402).startswith('shell:AppsFolder\\'),'App picker did not store an installed app'
-    command(settings,435)
-    set_text(settings,404,'example.com/docs')
+    command(settings,423)
+    command(settings,420)
+    command(settings,434)
+    set_text(settings,402,'example.com/docs')
     command(settings,9002)
     assert 'https://example.com/docs' in profile.read_text(encoding='utf-16'),'Website shortcut did not normalize'
     assert text(settings,8109)=='Workstations' and not u.GetDlgItem(settings,441)
@@ -129,37 +144,60 @@ try:
     settings=editor()
     assert text(settings,444)=='Workstation 1','Empty plus did not create a draft'
     set_text(settings,444,'Office')
-    choose_app(settings,460)
-    set_text(settings,450,'example.com')
-    set_text(settings,451,'https://example.org/work')
-    set_text(settings,456,'https://open.spotify.com/album/6rqhFgbbKwnb9MLmUQDhG6')
-    command(settings,9002)
-    assert 'Spotify track link' in text(settings,8002),'An album was accepted as a track'
-    set_text(settings,456,'https://open.spotify.com/track/6rqhFgbbKwnb9MLmUQDhG6?si=test')
+    assert not u.GetDlgItem(settings,9100) and not u.GetDlgItem(settings,9140),'Empty workstation showed unused slots'
+    for _ in range(5):
+        add_item(settings,470)
+        choose_app(settings,470)
+    for index in range(5):
+        add_item(settings,471)
+        pick_link(settings,471,'Website shortcut',f'example.com/{index}')
+    add_item(settings,472)
+    u.PostMessageW(settings,0x111,472,0)
+    spotify=dialog('Choose Spotify music')
+    assert text(spotify,2322)=='Open Spotify' and text(spotify,2323)=='Paste link'
+    set_text(spotify,2320,'https://open.spotify.com/album/6rqhFgbbKwnb9MLmUQDhG6')
+    command(spotify,1)
+    assert 'track or playlist link' in text(spotify,2321),'An album was accepted as music'
+    set_text(spotify,2320,'https://open.spotify.com/intl-en/playlist/6rqhFgbbKwnb9MLmUQDhG6?si=test')
+    command(spotify,1)
+    wait_for(lambda:not owned_dialog('Choose Spotify music'),'Playlist picker did not close')
     command(settings,9002)
     ini=profile.read_text(encoding='utf-16')
     assert all(value in ini for value in ('[Workstation1]','Name=Office','App1Target=shell:AppsFolder',
-                                           'Tab1=https://example.com','Tab2=https://example.org/work',
-                                           'SpotifyTrack=6rqhFgbbKwnb9MLmUQDhG6'))
+                                           'App5Target=shell:AppsFolder',
+                                           'Tab1=https://example.com/0','Tab5=https://example.com/4',
+                                           'SpotifyTrack=spotify:playlist:6rqhFgbbKwnb9MLmUQDhG6'))
     command(settings,441)
     set_text(settings,444,'Gaming')
-    set_text(settings,450,'https://example.net')
+    add_item(settings,471)
+    pick_link(settings,471,'Website shortcut','https://example.net')
     command(settings,9002)
     quit_app(p,main)
     p,main,settings=launch()
     command(settings,8109)
-    assert text(settings,444)=='Office' and text(settings,450)=='https://example.com'
+    assert text(settings,444)=='Office' and text(settings,9144)=='example.com/4'
+    assert 'Spotify playlist' in text(settings,456)
+    pick_link(settings,456,'Choose Spotify music','spotify:track:6rqhFgbbKwnb9MLmUQDhG6')
+    command(settings,9160)
+    command(settings,9002)
+    assert text(settings,9140)=='example.com/1' and not u.GetDlgItem(settings,9144)
+    assert 'SpotifyTrack=spotify:track:6rqhFgbbKwnb9MLmUQDhG6' in profile.read_text(encoding='utf-16')
     show_workstations(main,settings)
-    island_click(main,620,128)
+    island_click(main,185,241)
     settings=editor()
     assert text(settings,444)=='Gaming','Edit did not select the corresponding workstation'
     command(settings,442)
     command(settings,9002)
     ini=profile.read_text(encoding='utf-16')
     assert '[Workstation2]' not in ini and 'Name=Office' in ini,'Removing Gaming changed the wrong workstation'
-    print('App picker, website shortcut, Workstation persistence, dedicated tab, empty-state plus, editing, and removal passed.')
+    quit_app(p,main)
+    profile.write_text(ini.replace('SpotifyTrack=spotify:track:', 'SpotifyTrack='),encoding='utf-16')
+    p,main,settings=launch()
+    command(settings,8109)
+    assert 'Spotify track' in text(settings,456),'Legacy Spotify track did not migrate'
+    print('Workstation Add menu, five apps and websites, Spotify track and playlist picker, persistence, editing, and removal passed.')
 finally:
-    for title in ('Choose an app',):
+    for title in ('Choose an app','Website shortcut','Choose Spotify music'):
         window=owned_dialog(title)
         if window:
             command(window,2)

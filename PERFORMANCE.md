@@ -38,8 +38,8 @@ The smoke test also covers compact navigation hit targets, theme selection,
 optical allocation/release, reversal/collapse, stopped animation state,
 manual/timed pause and resume, singleton behavior, and clean exit.
 
-Optical glass uses a local background sample refreshed per opening, not live
-continuous desktop capture. The sample is held only in RAM and freed on hiding.
+Optical glass samples on opening and when the foreground window changes while
+the island is open. The sample is held in RAM and freed on hiding.
 This is an original approximation, not Apple's proprietary compositor.
 
 ## Readability and control revision

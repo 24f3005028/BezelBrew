@@ -27,6 +27,7 @@ using namespace Gdiplus;
 #include "preferences.hpp"
 #include "spotify_playback.hpp"
 #include "discord_voice.hpp"
+#include "background_apps.hpp"
 
 // No webview; optional connectors sleep between refreshes; the frame-clock worker sleeps when not animating.
 static HWND win,glassWindow,tooltips;
@@ -71,11 +72,11 @@ static ULONGLONG deadline=0,statusUntil=0;
 static ULONGLONG cpuIdle=0,cpuTotal=0;
 static unsigned cpuPercent=0;
 static NOTIFYICONDATA tray={sizeof(tray)};
+constexpr int pageTop=58;
 static const int fullWidth=680, fullHeight=284, unusedDimension=0;
 static double smallWidth=400,smallHeight=12;
 static double openness=0, fromOpen=0, toOpen=0, tabReveal=1, hoverReveal=1;
 static ULONGLONG motionStart=0,tabStart=0,hoverStart=0;
-static double indicator=0,indicatorFrom=0;
 static bool moving=false,tabMoving=false,hoverMoving=false;
 static int previousHover=-1;
 static bool contentDirty=true;static DWORD* scenePixels=0;static DWORD* cachedPixels=0;
@@ -89,7 +90,7 @@ static bool swipeCandidate=false,swiping=false;static int swipeX=0,swipeY=0;stat
 static int horizontalWheel=0;static ULONGLONG lastWheel=0,lastWheelEvent=0;
 static double contentOpacity=1;
 constexpr int workstationPage=10;
-static const wchar_t* tabNames[]={L"Music",L"Shelf",L"Clipboard",L"Widgets",L"Launcher",L"Focus",L"Settings",L"Workstations"};
+static const wchar_t* tabNames[]={L"Music",L"Shelf",L"Clipboard",L"Widgets",L"Apps",L"Focus",L"Settings",L"Workstations"};
 constexpr int primaryPages[]={0,1,2,3,5,6,7,workstationPage};
 constexpr int primaryTabCount=ARRAYSIZE(primaryPages);
 static_assert(ARRAYSIZE(tabNames)==primaryTabCount);
@@ -103,9 +104,11 @@ static int nextPrimaryPage(int page,int direction){
     if(index<0)return primaryPage(direction>0?0:primaryTabCount-1);
     return primaryPage((index+direction+primaryTabCount)%primaryTabCount);
 }
-static int indicatorIndex(int page){int index=primaryIndex(page);return index<0?primaryIndex(7):index;}
-static int tabLeft(int index){return 121+index*54;}
-enum class ToolbarGlyph { Wave, Tray, Copies, Widgets, Launch, Focus, Tuning, Screens, Pin, Links, Glass };
+constexpr RECT tileBounds(int index){
+    int left=36+index*52;
+    return {left,9,left+36,45};
+}
+enum class ToolbarGlyph { Wave, Tray, Copies, Widgets, Launch, Focus, Tuning, Screens, Pin, Mail, Glass, ClearApps };
 constexpr ToolbarGlyph primaryGlyphs[]={
     ToolbarGlyph::Wave, ToolbarGlyph::Tray, ToolbarGlyph::Copies, ToolbarGlyph::Widgets,
     ToolbarGlyph::Launch, ToolbarGlyph::Focus, ToolbarGlyph::Tuning, ToolbarGlyph::Screens
@@ -117,13 +120,13 @@ struct ToolbarControl {
     ToolbarGlyph glyph;
     const wchar_t* name;
 };
-constexpr ToolbarControl pinControl={900,{33,10,67,44},ToolbarGlyph::Pin,L"Pin or unpin island"};
-constexpr ToolbarControl connectorsControl={902,{541,9,581,51},ToolbarGlyph::Links,L"Connectors"};
-constexpr ToolbarControl appearanceControl={901,{593,9,640,51},ToolbarGlyph::Glass,L"Appearance"};
-static RECT tabBounds(int i){return {tabLeft(i),7,tabLeft(i)+40,46};}
+constexpr ToolbarControl pinControl={900,tileBounds(8),ToolbarGlyph::Pin,L"Pin or unpin island"};
+constexpr ToolbarControl mailControl={902,tileBounds(9),ToolbarGlyph::Mail,L"Mail"};
+constexpr ToolbarControl appearanceControl={901,tileBounds(10),ToolbarGlyph::Glass,L"Appearance"};
+constexpr ToolbarControl clearAppsControl={903,tileBounds(11),ToolbarGlyph::ClearApps,L"Clear memory"};
 static int startupPage(int savedTab){return savedTab==8?workstationPage:savedTab;}
 static const wchar_t* appearanceModes[]={L"Glass",L"Solid"};
-enum Icon {Music,IconFolder,Clipboard,Grid,Timer,Gear,Palette,Previous,Play,Next,Volume,Mic,Check,Plus,Trash,Arrow,Pause,Power,Monitor,Close,Minus,Envelope,Note};
+enum Icon {Music,IconFolder,Clipboard,Grid,Timer,Gear,Palette,Previous,Play,Next,Volume,Mic,Check,Plus,Trash,Arrow,Pause,Power,Monitor,Close,Minus,Envelope,Note,Phone,Voice};
 constexpr RECT quickNoteBounds={596,67,646,109};
 constexpr UINT_PTR musicTitleTip=20,quickNoteTip=21;
 struct Hit { int id,x,y,w,h; const wchar_t* tip; };
@@ -205,6 +208,8 @@ static void icon(Graphics& g,Icon kind,int x,int y,int size,Color c){float k=siz
     case Power:E(3,3,18,18);L(12,1,12,11);break;
     case Monitor:R(2,3,20,14,2);L(12,17,12,22);L(7,22,17,22);break;
     case Envelope:R(2,4,20,16,3);L(3,6,12,13);L(12,13,21,6);break;
+    case Phone:R(6,2,12,20,3);L(10,5,14,5);L(11,19,13,19);break;
+    case Voice:R(3,3,18,14,4);L(8,17,6,21);L(6,21,12,17);E(8,9,2,2);E(14,9,2,2);break;
     case Minus:L(5,12,19,12);break;
     case Close:L(6,6,18,18);L(18,6,6,18);break;
     }
@@ -295,13 +300,20 @@ static void drawToolbarGlyph(Graphics& g,ToolbarGlyph kind,float x,float y,float
         stroke(12,13,12,21);
         break;
     }
-    case ToolbarGlyph::Links:
-        stroke(7,12,17,6);
-        stroke(7,12,17,18);
-        mark(3,8,8,8);
-        mark(14,3,7,7);
-        mark(14,14,7,7);
+    case ToolbarGlyph::Mail:
+        g.DrawRectangle(&pen,3,5,18,14);
+        stroke(4,7,12,13);
+        stroke(12,13,20,7);
         break;
+    case ToolbarGlyph::ClearApps: {
+        const Point body[]={{6,8},{7,21},{17,21},{18,8}};
+        g.DrawLines(&pen,body,ARRAYSIZE(body));
+        stroke(4,6,20,6);
+        stroke(9,3,15,3);
+        stroke(10,10,10,17);
+        stroke(14,10,14,17);
+        break;
+    }
     case ToolbarGlyph::Glass: {
         GraphicsPath drop;
         drop.AddBezier(12,3,9,7,5,11,5,15);
@@ -315,19 +327,30 @@ static void drawToolbarGlyph(Graphics& g,ToolbarGlyph kind,float x,float y,float
     }
     g.Restore(state);
 }
-static void toolbarSelection(Graphics& g,float left,float top,float width,float height){
-    rounded(g,left+1,top+2,width-2,height-4,11,fade(accent(),.25));
-    rounded(g,left+1,top+2,width-2,height-4,11,fade(accent(),.65),true);
-}
-static void toolbarButton(Graphics& g,const ToolbarControl& control,bool active,float size=30){
+static void toolbarButton(Graphics& g,const ToolbarControl& control,bool active,float size=22){
     const auto& b=control.bounds;
     const int width=b.right-b.left,height=b.bottom-b.top;
     addHit(control.id,b.left,b.top,width,height,control.name);
-    hoverBox(g,control.id,b.left,b.top,width,height,11);
+    Color edge=active?fade(accent(),.7):panel(.19);
+    rounded(g,b.left,b.top,width,height,8,active?fade(accent(),.28):panel(.12));
+    hoverBox(g,control.id,b.left,b.top,width,height,8);
+    rounded(g,b.left,b.top,width,height,8,edge,true);
     drawToolbarGlyph(g,control.glyph,b.left+(width-size)/2,b.top+(height-size)/2,size,
                      active||pressed==control.id||hover==control.id?primary():secondary());
 }
 static void action(Graphics& g,HDC dc,int id,int x,int y,int w,const wchar_t* value,Icon glyph,bool active=false){addHit(id,x,y,w,42,value);rounded(g,x,y,w,42,12,panel(active?.21:.10));hoverBox(g,id,x,y,w,42);icon(g,glyph,x+13,y+12,18,active?accent():secondary());label(dc,x+42,y,w-50,42,value,primary());}
+static void squareTile(Graphics& g,HDC dc,int id,int center,int top,int size,Icon glyph,
+                       const wchar_t* name,int labelWidth=0,bool selected=false){
+    const int left=center-size/2,captionHeight=23,glyphSize=size*5/9;
+    addHit(id,left,top,size,size,labelWidth?nullptr:name);
+    if(labelWidth)addHit(id,center-labelWidth/2,top+size,labelWidth,captionHeight,nullptr);
+    rounded(g,left,top,size,size,10,selected?fade(accent(),.25):panel(.13));
+    hoverBox(g,id,left,top,size,size,10);
+    rounded(g,left,top,size,size,10,selected?fade(accent(),.75):panel(.22),true);
+    icon(g,glyph,center-glyphSize/2,top+(size-glyphSize)/2,glyphSize,
+         selected||pressed==id?accent():primary());
+    if(labelWidth)label(dc,center-labelWidth/2,top+size,labelWidth,captionHeight,name,primary(),1,DT_CENTER);
+}
 static LRESULT CALLBACK glassProc(HWND h,UINT message,WPARAM w,LPARAM l){
     if(message==WM_ERASEBKGND)return 1;
     if(message==WM_PAINT){PAINTSTRUCT ps;BeginPaint(h,&ps);EndPaint(h,&ps);return 0;}
@@ -352,15 +375,22 @@ static void presentScene(){
     BLENDFUNCTION blend={AC_SRC_OVER,0,(BYTE)(8+247*progress),AC_SRC_ALPHA};
     UpdateLayeredWindow(win,0,&position,&size,backDC,&origin,0,&blend,ULW_ALPHA);
 }
+static HWND glassForeground=nullptr;
 static void syncGlass(int x,int y,int w,int h){
     if(!prefs.glassMode||paused)return;
+    HWND foreground=GetForegroundWindow();
     if(OpticalGlass::surface&&OpticalGlass::width==w&&OpticalGlass::height==h&&
-       OpticalGlass::originX==x&&OpticalGlass::originY==y)return;
-    // Exclude the existing pane when applying colors while it is open.
-    bool visible=openness>.25&&IsWindowVisible(win);
-    if(visible){ShowWindow(win,SW_HIDE);DwmFlush();}
-    OpticalGlass::capture(x,y,w,h);
+       OpticalGlass::originX==x&&OpticalGlass::originY==y&&glassForeground==foreground)return;
+    // The screen DC can include layered windows even without CAPTUREBLT.
+    const bool visible=IsWindowVisible(win)!=FALSE;
+    if(visible)ShowWindow(win,SW_HIDE);
+    DwmFlush();
+    double start=profileNow();
+    const bool captured=OpticalGlass::capture(x,y,w,h);
     if(visible)ShowWindow(win,SW_SHOWNOACTIVATE);
+    if(captured)OpticalGlass::render();
+    OpticalGlass::renderMs=profileNow()-start;
+    glassForeground=foreground;
     contentDirty=true;
 }
 static BOOL CALLBACK findPreferredMonitor(HMONITOR monitor,HDC,LPRECT,LPARAM data){MONITORINFOEX info={};info.cbSize=sizeof(info);GetMonitorInfo(monitor,&info);if(!_wcsicmp(info.szDevice,prefs.monitor))*(HMONITOR*)data=monitor;return TRUE;}
@@ -404,7 +434,7 @@ static void loadSettings(){
     GetModuleFileName(0,configFile,MAX_PATH);wchar_t* end=wcsrchr(configFile,L'\\');
     if(end)wcscpy_s(end+1,MAX_PATH-(end-configFile)-1,L"WinPixel.ini");
     wchar_t overridePath[MAX_PATH];if(GetEnvironmentVariable(L"WINPIXEL_CONFIG",overridePath,MAX_PATH)>0)wcscpy_s(configFile,overridePath);
-    readPreferences(configFile,prefs);uiScale=.55*prefs.sizePercent/100.0;smallWidth=prefs.hoverWidth/uiScale;smallHeight=prefs.hoverHeight/uiScale;selected=startupPage(prefs.defaultTab);indicator=indicatorIndex(selected);
+    readPreferences(configFile,prefs);uiScale=.55*prefs.sizePercent/100.0;smallWidth=prefs.hoverWidth/uiScale;smallHeight=prefs.hoverHeight/uiScale;selected=startupPage(prefs.defaultTab);
     animations=GetPrivateProfileInt(L"Appearance",L"Animations",1,configFile)!=0;
     docked=GetPrivateProfileInt(L"Appearance",L"Docked",0,configFile)!=0;
 }
@@ -415,10 +445,15 @@ static void animationTimer(){
     if(needed&&!frameTimer){timeBeginPeriod(1);if(frameClock){LARGE_INTEGER due;due.QuadPart=-160000;SetWaitableTimerEx(frameClock,&due,16,0,0,0,0);}else SetTimer(win,3,16,0);frameTimer=true;}
     else if(!needed&&frameTimer){KillTimer(win,3);if(frameClock)CancelWaitableTimer(frameClock);timeEndPeriod(1);frameTimer=false;}
 }
-static void expand(bool value){if(paused)return;if(expanded==value)return;expanded=value;if(!value){swiping=swipeCandidate=false;if(GetCapture()==win)ReleaseCapture();}contentDirty=true;frameLast=0;fromOpen=openness;toOpen=value?1:0;motionStart=GetTickCount64();moving=animations;if(value){NativeMedia::refresh();readVolume(true);}if(value)SetTimer(win,1,1000,0);else if(!focus)KillTimer(win,1);hover=-1;pressed=-1;if(!moving){openness=toOpen;place();if(!expanded)releaseBuffer();}animationTimer();repaint();}
+static void expand(bool value){if(paused)return;if(expanded==value)return;expanded=value;if(!value){swiping=swipeCandidate=false;if(GetCapture()==win)ReleaseCapture();}contentDirty=true;frameLast=0;fromOpen=openness;toOpen=value?1:0;motionStart=GetTickCount64();moving=animations;if(value){OpticalGlass::release();NativeMedia::refresh();readVolume(true);}if(value)SetTimer(win,1,1000,0);else if(!focus)KillTimer(win,1);hover=-1;pressed=-1;if(!moving){openness=toOpen;place();if(!expanded)releaseBuffer();}animationTimer();repaint();}
+static void toggleIsland(){
+    const bool open=!expanded;
+    if(!open)pinned=false;
+    expand(open);
+}
 static void choose(int index,int direction=0){
     if(index==selected)return;slideSource=selected;slideTarget=index;slideDirection=direction?direction:(index>selected?1:-1);
-    selected=index;updatePageTooltips();scrollOffset=0;slideFrom=0;slideGoal=1;tabReveal=animations?0:1;indicatorFrom=indicator;tabStart=GetTickCount64();tabMoving=animations;if(!animations)indicator=indicatorIndex(selected);hover=-1;sampleCpu();if(index==0){NativeMedia::refresh();readVolume(false);}animationTimer();repaint();
+    selected=index;updatePageTooltips();scrollOffset=0;slideFrom=0;slideGoal=1;tabReveal=animations?0:1;tabStart=GetTickCount64();tabMoving=animations;hover=-1;sampleCpu();if(index==0){NativeMedia::refresh();readVolume(false);}animationTimer();repaint();
 }
 static void beginSwipe(int x,int y){swipeX=x;swipeY=y;swipeOffset=0;swipeCandidate=true;swiping=false;}
 static void moveSwipe(int x,int y){
@@ -430,10 +465,10 @@ static void moveSwipe(int x,int y){
 static void finishSwipe(bool canceled=false){
     bool active=swiping;swiping=swipeCandidate=false;if(!active)return;
     bool commit=!canceled&&fabs(swipeOffset)>=48;
-    slideFrom=tabReveal;slideGoal=commit?1:0;indicatorFrom=indicator;
+    slideFrom=tabReveal;slideGoal=commit?1:0;
     if(commit){selected=slideTarget;updatePageTooltips();scrollOffset=0;if(selected==0){NativeMedia::refresh();readVolume(false);}}
     tabStart=GetTickCount64();tabMoving=animations;
-    if(!animations){tabReveal=slideGoal;indicator=indicatorIndex(selected);}
+    if(!animations){tabReveal=slideGoal;}
     animationTimer();repaint();if(!pinned)SetTimer(win,2,prefs.closeDelay,0);
 }
 static void media(WORD key){INPUT in[2]={};in[0].type=in[1].type=INPUT_KEYBOARD;in[0].ki.wVk=in[1].ki.wVk=key;in[1].ki.dwFlags=KEYEVENTF_KEYUP;if(SendInput(2,in,sizeof(INPUT))!=2)say(L"Windows could not deliver the media command.");}
@@ -504,34 +539,69 @@ static void drawWidgets(Graphics& g,HDC dc){
     tile(g,dc,34,133,194,L"Local time",clock,Timer,accent());
     tile(g,dc,243,133,194,L"CPU",cpu,Monitor,secondary());
     tile(g,dc,452,133,194,L"Memory",ram,Grid,secondary());
+    addHit(707,452,245,194,30,clearAppsControl.name);
+    rounded(g,452,245,194,30,8,panel(.14));
+    hoverBox(g,707,452,245,194,30,8);
+    label(dc,452,245,194,30,clearAppsControl.name,primary(),1,DT_CENTER);
 }
-static void drawLauncher(Graphics& g,HDC dc){
-    label(dc,34,64,420,33,L"Launchers",primary(),2);
-    action(g,dc,506,536,61,110,L"Edit",Gear);
-    constexpr int tileSize=104,iconSize=66,spacing=152,top=109,labelHeight=58;
+constexpr int appColumns=4,visibleAppRows=2,appHitBase=1000;
+static int appScroll=0,appWheel=0;
+static int appRows(){
     int count=0;
-    for(const auto& target:prefs.launcherTargets)if(target[0])count++;
-    if(!count){
-        action(g,dc,506,216,151,248,L"Add a launcher",Plus);
+    for(const auto& app:prefs.apps)if(app.path[0])count++;
+    return (count+appColumns-1)/appColumns;
+}
+static void scrollApps(int rows){
+    int next=appScroll+rows,limit=appRows()-visibleAppRows;
+    if(next>limit)next=limit;
+    if(next<0)next=0;
+    if(next==appScroll)return;
+    appScroll=next;
+    hover=previousHover=-1;
+    pressed=-1;
+    repaint();
+}
+static void appScrollButton(Graphics& g,int id,int x,bool up){
+    addHit(id,x,61,40,42,up?L"Scroll up":L"Scroll down");
+    hoverBox(g,id,x,61,40,42);
+    int start=up?85:79,middle=up?79:85;
+    line(g,x+13,start,x+20,middle,secondary(),2);
+    line(g,x+20,middle,x+27,start,secondary(),2);
+}
+static void drawApps(Graphics& g,HDC dc){
+    label(dc,34,64,350,33,L"Apps",primary(),2);
+    int rows=appRows();
+    action(g,dc,506,536,61,110,L"Edit",Gear);
+    if(!rows){
+        action(g,dc,507,216,151,248,L"Add an app or shortcut",Plus);
         return;
     }
-    int center=340-(count-1)*spacing/2;
-    for(int i=0;i<4;i++){
-        const wchar_t* target=prefs.launcherTargets[i];
-        if(!target[0])continue;
-        int left=center-tileSize/2, id=501+i;
-        addHit(id,center-spacing/2+3,top,spacing-6,tileSize+7+labelHeight,prefs.launcherNames[i]);
-        rounded(g,left,top,tileSize,tileSize,21,panel(.11));
-        hoverBox(g,id,left,top,tileSize,tileSize,21);
-        rounded(g,left,top,tileSize,tileSize,21,panel(.19),true);
-        if(Bitmap* app=LauncherIcons::image(i,target)){
+    if(appScroll>0)appScrollButton(g,508,442,true);
+    if(appScroll+visibleAppRows<rows)appScrollButton(g,509,486,false);
+    constexpr int tileSize=61,iconSize=44,spacing=152,labelHeight=24,rowHeight=85;
+    const int first=appScroll*appColumns,last=first+visibleAppRows*appColumns;
+    int item=0;
+    for(int i=0;i<appLimit;i++){
+        const auto& app=prefs.apps[i];
+        if(!app.path[0])continue;
+        int index=item++;
+        if(index<first)continue;
+        if(index>=last)break;
+        int column=index%appColumns,row=(index-first)/appColumns;
+        int center=112+column*spacing,top=(rows==1?134:103)+row*rowHeight;
+        int left=center-tileSize/2,id=appHitBase+i;
+        const wchar_t* name=app.name[0]?app.name:L"Shortcut";
+        addHit(id,center-spacing/2+3,top,spacing-6,tileSize+labelHeight,name);
+        rounded(g,left,top,tileSize,tileSize,15,panel(.11));
+        hoverBox(g,id,left,top,tileSize,tileSize,15);
+        rounded(g,left,top,tileSize,tileSize,15,panel(.19),true);
+        if(Bitmap* image=LauncherIcons::image(i,app.path)){
             GraphicsState state=g.Save();
             g.SetInterpolationMode(InterpolationModeHighQualityBicubic);
-            g.DrawImage(app,RectF(F(center-iconSize/2),F(top+(tileSize-iconSize)/2+contentOffset),F(iconSize),F(iconSize)));
+            g.DrawImage(image,RectF(F(center-iconSize/2),F(top+(tileSize-iconSize)/2+contentOffset),F(iconSize),F(iconSize)));
             g.Restore(state);
         }
-        label(dc,center-spacing/2+3,top+tileSize+7,spacing-6,labelHeight,prefs.launcherNames[i],primary(),1,DT_CENTER|DT_WORDBREAK);
-        center+=spacing;
+        label(dc,center-spacing/2+3,top+tileSize,spacing-6,labelHeight,name,primary(),1,DT_CENTER);
     }
 }
 static void drawWorkstations(Graphics& g,HDC dc){
@@ -540,28 +610,24 @@ static void drawWorkstations(Graphics& g,HDC dc){
     for(int i=0;i<workstationCount;i++){
         const auto& station=prefs.workstations[i];
         if(!station.name[0])continue;
-        int x=34+(count%2)*312,y=107+(count/2)*48;
-        action(g,dc,720+i,x,y,246,station.name,Play);
-        iconButton(g,730+i,x+252,y,48,42,Gear,L"Edit workstation",20);
+        int center=82+count*103;
+        squareTile(g,dc,720+i,center,114,68,Play,station.name,98);
+        squareTile(g,dc,730+i,center,224,34,Gear,L"Edit workstation");
         count++;
     }
-    if(count){
-        bool full=count==workstationCount;
-        iconButton(g,full?511:510,595,62,51,37,full?Gear:Plus,
-                   full?L"Manage workstations":L"Add workstation",accent(),23);
-        return;
-    }
-    addHit(510,195,111,290,119,L"Add workstation");
-    rounded(g,195,111,290,119,16,panel(.10));
-    rounded(g,195,111,290,119,16,panel(.29),true);
-    hoverBox(g,510,195,111,290,119,16);
-    rounded(g,317,126,46,46,12,panel(.17));
-    icon(g,Plus,328,137,24,accent());
-    label(dc,205,180,270,34,L"Add workstation",primary(),2,DT_CENTER);
+    if(count==workstationCount)
+        squareTile(g,dc,511,621,64,34,Gear,L"Manage workstations");
+    else
+        squareTile(g,dc,510,count?82+count*103:340,114,68,Plus,
+                   count?L"Add":L"Add workstation",count?98:180);
 }
 static void drawFocus(Graphics& g,HDC dc){ULONGLONG left=focus&&deadline>GetTickCount64()?(deadline-GetTickCount64()+999)/1000:(ULONGLONG)prefs.focusMinutes*60;wchar_t clock[40];swprintf_s(clock,L"%02llu:%02llu",left/60,left%60);icon(g,Timer,45,101,53,accent());label(dc,121,82,290,75,clock,primary(),4);label(dc,123,159,350,24,focus?(inBreak?L"Rest your eyes and stretch a little.":L"Focus session in progress"):L"Ready to start",secondary());action(g,dc,601,449,111,197,focus?(inBreak?L"End break":L"End session"):L"Start focus",focus?Close:Play,focus);rounded(g,35,227,610,4,2,panel(.26));if(focus)rounded(g,35,227,(float)(610*(1-left/(double)(focusTotalSeconds))),4,2,accent());label(dc,35,246,610,22,focus?L"A notification will let you know when it is time for a break.":L"",secondary(),0);}
 static void toggle(Graphics& g,HDC dc,int id,int x,int y,int w,const wchar_t* name,bool on){addHit(id,x,y,w,42,name);hoverBox(g,id,x,y,w,42);label(dc,x+12,y,w-70,42,name,primary());rounded(g,x+w-51,y+11,37,20,10,on?accent():panel(.30));ellipse(g,x+w-48+(on?16:0),y+14,14,14,on?base():primary(),true);}
-static void drawSettings(Graphics& g,HDC dc){heading(dc,L"Settings",L"Appearance, behavior, tools, and shortcuts.");action(g,dc,705,34,142,612,L"Open settings",Gear);action(g,dc,706,34,198,612,L"Quick note",Note);}
+static void drawSettings(Graphics& g,HDC dc){
+    heading(dc,L"Settings",L"Appearance, behavior, tools, and shortcuts.");
+    squareTile(g,dc,705,103,141,76,Gear,L"Open settings",136);
+    squareTile(g,dc,706,245,141,76,Note,L"Quick note",136);
+}
 static void drawTheme(Graphics& g,HDC dc){
     heading(dc,L"Appearance",L"Choose the island material.");
     for(int i=0;i<2;i++){
@@ -578,39 +644,33 @@ static void drawTheme(Graphics& g,HDC dc){
     }
     action(g,dc,803,34,212,612,L"Customize colors",Palette);
 }
-static void drawConnectors(Graphics& g,HDC dc){
+static void drawMail(Graphics& g,HDC dc){
     const auto& v=connectorView;
-    label(dc,34,66,285,31,L"Connectors",primary(),2);
-    if(connectorFeed!=2)iconButton(g,953,550,64,40,35,Arrow,L"Refresh connectors",secondary(),18);
-    iconButton(g,952,604,64,40,35,Gear,L"Connector settings",secondary(),21);
-    wchar_t mail[64],phone[64];
-    swprintf_s(mail,L"Mail  ·  %d unread",v.unread);
-    swprintf_s(phone,L"Phone  ·  %d",v.phoneCount);
-    const wchar_t* tabs[]={mail,phone,L"Discord"};
-    const wchar_t* tips[]={L"Gmail",L"Phone notifications",L"Discord"};
-    const int ids[]={950,951,954};
-    for(int i=0;i<3;i++){
-        int x=34+i*208;
-        addHit(ids[i],x,104,196,31,tips[i]);
-        rounded(g,x,104,196,31,10,connectorFeed==i?panel(.23):panel());
-        hoverBox(g,ids[i],x,104,196,31,10);
-        label(dc,x+12,104,172,31,tabs[i],connectorFeed==i?accent():secondary(),1);
-    }
+    label(dc,34,66,285,31,L"Mail",primary(),2);
+    if(connectorFeed!=2)squareTile(g,dc,953,570,64,34,Arrow,L"Refresh");
+    squareTile(g,dc,952,621,64,34,Gear,L"Feed settings");
+    wchar_t mail[24]=L"Mail",phone[24]=L"Phone";
+    if(v.unread>0)swprintf_s(mail,L"Mail (%d)",v.unread);
+    if(v.phoneCount>0)swprintf_s(phone,L"Phone (%d)",v.phoneCount);
+    squareTile(g,dc,950,79,104,40,Envelope,mail,90,connectorFeed==0);
+    squareTile(g,dc,951,175,104,40,Phone,phone,90,connectorFeed==1);
+    squareTile(g,dc,954,271,104,40,Voice,L"Discord",90,connectorFeed==2);
     if(connectorFeed==2){
-        label(dc,34,148,612,29,L"Discord voice",primary(),2);
-        label(dc,34,175,612,24,L"Uses the mute shortcut in the Discord desktop window.",secondary());
-        action(g,dc,955,34,201,313,L"Toggle Discord mute",Mic);
-        action(g,dc,956,363,201,283,L"Open Discord",Arrow);
+        label(dc,34,169,612,28,L"Discord voice",primary(),2);
+        label(dc,34,199,332,64,L"Uses the mute shortcut in the Discord desktop window.",
+              secondary(),1,DT_WORDBREAK);
+        squareTile(g,dc,955,435,191,55,Mic,L"Toggle mute",140);
+        squareTile(g,dc,956,577,191,55,Arrow,L"Open Discord",140);
         return;
     }
     int total=connectorFeed?v.phoneCount:v.mailCount;
-    if(!total){label(dc,34,150,612,32,connectorFeed?L"Your phone notifications, here":L"Your latest mail, here",primary(),2);
-        label(dc,34,186,612,28,connectorFeed?L"Set up Android or iPhone in connector settings.":L"Connect Google in settings to show Inbox headers.",secondary(),1);
+    if(!total){label(dc,34,171,612,32,connectorFeed?L"Phone notifications":L"Your latest mail",primary(),2);
+        label(dc,34,206,612,28,connectorFeed?L"Set up Android or iPhone in settings.":L"Connect Google in settings to see your inbox.",secondary(),1);
     }else for(int row=0;row<2&&row+scrollOffset<total;row++){
-        int i=row+scrollOffset,y=143+row*47;addHit(960+i,34,y,612,43,L"Open notification");hoverBox(g,960+i,34,y,612,43);
+        int i=row+scrollOffset,y=172+row*36;addHit(960+i,34,y,612,35,L"Open notification");hoverBox(g,960+i,34,y,612,35);
         const wchar_t* title=connectorFeed?v.phone[i].title:v.mail[i].title;
         const wchar_t* from=connectorFeed?v.phone[i].app:v.mail[i].sender;
-        label(dc,39,y,600,23,title,primary(),1);label(dc,39,y+23,600,19,from,secondary(),0);
+        label(dc,39,y,600,19,title,primary(),1);label(dc,39,y+18,600,17,from,secondary(),0);
     }
     wchar_t phoneState[240];swprintf_s(phoneState,L"Android: %s   ·   iPhone: %s",!prefs.androidEnabled?L"off":v.androidConnected?L"connected":L"setup / offline",!prefs.iphoneEnabled?L"off":v.iphoneConnected?L"subscribed":L"setup / unavailable");
     const wchar_t* state=connectorFeed?phoneState:v.gmailStatus;
@@ -618,11 +678,10 @@ static void drawConnectors(Graphics& g,HDC dc){
 }
 static void drawPage(Graphics& g,HDC dc,int page,int xOffset,bool interactive){
     int originalHits=hitCount;int dcState=SaveDC(dc);GraphicsState gs=g.Save();
-    RECT bounds;GetClipBox(dc,&bounds);
-    IntersectClipRect(dc,S(20),S(58),S(660),S(282));
-    g.SetClip(RectF(F(20),F(58),F(640),F(224)),CombineModeIntersect);
+    IntersectClipRect(dc,S(20),S(pageTop),S(660),S(282));
+    g.SetClip(RectF(F(20),F(pageTop),F(640),F(224)),CombineModeIntersect);
     SetViewportOrgEx(dc,S(xOffset),0,0);g.TranslateTransform(F(xOffset),0);
-    switch(page){case 0:drawMusic(g,dc);break;case 1:drawShelf(g,dc);break;case 2:drawClipboard(g,dc);break;case 3:drawWidgets(g,dc);break;case 5:drawLauncher(g,dc);break;case 6:drawFocus(g,dc);break;case 7:drawSettings(g,dc);break;case 8:drawTheme(g,dc);break;case 9:drawConnectors(g,dc);break;case workstationPage:drawWorkstations(g,dc);break;}
+    switch(page){case 0:drawMusic(g,dc);break;case 1:drawShelf(g,dc);break;case 2:drawClipboard(g,dc);break;case 3:drawWidgets(g,dc);break;case 5:drawApps(g,dc);break;case 6:drawFocus(g,dc);break;case 7:drawSettings(g,dc);break;case 8:drawTheme(g,dc);break;case 9:drawMail(g,dc);break;case workstationPage:drawWorkstations(g,dc);break;}
     g.Restore(gs);RestoreDC(dc,dcState);if(!interactive)hitCount=originalHits;
 }
 static void paint(HDC dc){
@@ -637,20 +696,14 @@ static void paint(HDC dc){
     contentOffset=0;
     if(openness<.005&&!expanded)return;
     contentOpacity=1;
-    if(primaryIndex(selected)>=0){
-        toolbarSelection(g,(float)(tabLeft(0)+indicator*(tabLeft(1)-tabLeft(0))),7,40,39);
-    }else if(selected==8||selected==9){
-        const auto& b=(selected==8?appearanceControl:connectorsControl).bounds;
-        toolbarSelection(g,b.left,b.top,b.right-b.left,b.bottom-b.top);
-    }
     for(int i=0;i<primaryTabCount;i++){
         int page=primaryPage(i);
-        toolbarButton(g,{page,tabBounds(i),primaryGlyphs[i],tabNames[i]},selected==page);
+        toolbarButton(g,{page,tileBounds(i),primaryGlyphs[i],tabNames[i]},selected==page);
     }
-    if(pinned)toolbarSelection(g,33,10,34,34);
-    toolbarButton(g,pinControl,pinned,23);
-    toolbarButton(g,connectorsControl,selected==9);
+    toolbarButton(g,pinControl,pinned,19);
+    toolbarButton(g,mailControl,selected==9);
     toolbarButton(g,appearanceControl,selected==8);
+    toolbarButton(g,clearAppsControl,false);
     contentOpacity=1;contentOffset=0;
     if(tabMoving||swiping){int oldX=(int)(-slideDirection*fullWidth*tabReveal),newX=(int)(slideDirection*fullWidth*(1-tabReveal));drawPage(g,dc,slideSource,oldX,false);drawPage(g,dc,slideTarget,newX,false);}
     else drawPage(g,dc,selected,0,true);
@@ -690,7 +743,6 @@ static int renderPreviews(){
             prefs.fontRgb=0xf5f5f7;
         }
         selected=i==4?workstationPage:i<9?i:3;
-        indicator=indicatorIndex(selected);
         paint(dc);GdiFlush();
         wchar_t name[100];swprintf_s(name,L"tests\\previews\\%02d.png",i);
         Bitmap image(bmp,0);if(image.Save(name,&png,0)!=Ok)errors++;
@@ -711,8 +763,8 @@ static void setupTooltips(){
         tool.lpszText=(wchar_t*)name;
         SendMessage(tooltips,TTM_ADDTOOL,0,(LPARAM)&tool);
     };
-    for(int i=0;i<primaryTabCount;i++)toolbarTip(i+1,tabBounds(i),tabNames[i]);
-    const ToolbarControl auxiliary[]={pinControl,connectorsControl,appearanceControl};
+    for(int i=0;i<primaryTabCount;i++)toolbarTip(i+1,tileBounds(i),tabNames[i]);
+    const ToolbarControl auxiliary[]={pinControl,mailControl,appearanceControl,clearAppsControl};
     for(const auto& control:auxiliary)
         toolbarTip(control.id,control.bounds,control.name);
     TOOLINFO tip={sizeof(tip)};
@@ -740,7 +792,7 @@ static void runWorkstation(int index){
     if(index<0||index>=workstationCount||!prefs.workstations[index].name[0])return;
     const auto& station=prefs.workstations[index];
     int failed=0;
-    bool hasItems=station.track[0]!=0;
+    bool hasItems=station.spotify[0]!=0;
     for(const auto& app:station.apps)if(app.path[0]){
         hasItems=true;
         if(!LaunchTargets::shortcut(win,app.path))failed++;
@@ -748,14 +800,14 @@ static void runWorkstation(int index){
     for(const auto& tab:station.tabs)if(tab[0])hasItems=true;
     auto tabs=LaunchTargets::openTabs(win,station.tabs,true);
     failed+=tabs.failed;
-    bool trackOpened=false;
-    if(station.track[0]&&!(SpotifyPlayback::linked(configFile)&&SpotifyPlayback::start(win,configFile,station.track))){
-        trackOpened=LaunchTargets::openTrack(win,station.track);
-        if(!trackOpened)failed++;
+    bool spotifyOpened=false;
+    if(station.spotify[0]&&!(SpotifyPlayback::linked(configFile)&&SpotifyPlayback::start(win,configFile,station.spotify))){
+        spotifyOpened=LaunchTargets::openSpotifyItem(win,station.spotify);
+        if(!spotifyOpened)failed++;
     }
-    if(!hasItems)workstationNotice(L"Add apps, tabs, or a Spotify track to this workstation.");
+    if(!hasItems)workstationNotice(L"Add apps, tabs, or Spotify music to this workstation.");
     else if(failed){wchar_t status[100];swprintf_s(status,L"%d workstation item%s couldn’t open.",failed,failed==1?L"":L"s");workstationNotice(status);}
-    else if(trackOpened)workstationNotice(tabs.fallback?L"Tabs opened in your default browser. Track opened in Spotify.":L"Track opened in Spotify. Press Play to start it.");
+    else if(spotifyOpened)workstationNotice(tabs.fallback?L"Tabs opened in your default browser. Music opened in Spotify.":L"Music opened in Spotify. Press Play to start it.");
     else if(tabs.fallback)workstationNotice(L"Chrome was unavailable. Tabs opened in your default browser.");
 }
 static void quickOpen(){
@@ -793,50 +845,71 @@ static void pauseFor(unsigned minutes){
 static void menu(){wchar_t resume[128],quit[128];swprintf_s(resume,L"Resume %s   (Win+Alt+N)",appName());swprintf_s(quit,L"Quit %s",appName());POINT p;GetCursorPos(&p);HMENU m=CreatePopupMenu();if(paused)AppendMenu(m,MF_STRING,6,resume);else{
     HMENU pauses=CreatePopupMenu();AppendMenu(pauses,MF_STRING,11,L"5 minutes");AppendMenu(pauses,MF_STRING,12,L"15 minutes");AppendMenu(pauses,MF_STRING,13,L"30 minutes   (Win+Alt+N)");AppendMenu(pauses,MF_STRING,14,L"1 hour");AppendMenu(m,MF_POPUP,(UINT_PTR)pauses,L"Pause for");}
     AppendMenu(m,MF_STRING|(paused?MF_GRAYED:0),1,pinned?L"Unpin island":L"Keep open");AppendMenu(m,MF_STRING,5,L"Settings…");AppendMenu(m,MF_STRING,7,L"Quick Open…");AppendMenu(m,MF_STRING,2,L"Clear clipboard history");AppendMenu(m,MF_STRING,3,L"Clear file shelf");AppendMenu(m,MF_SEPARATOR,0,0);AppendMenu(m,MF_STRING,4,quit);SetForegroundWindow(win);int id=TrackPopupMenu(m,TPM_RETURNCMD|TPM_RIGHTBUTTON,p.x,p.y,0,win,0);DestroyMenu(m);if(id==6)pauseFor(0);if(id>=11&&id<=14){unsigned lengths[]={5,15,30,60};pauseFor(lengths[id-11]);}if(id==1){pinned=!pinned;expand(pinned);repaint();}if(id==2){SecureZeroMemory(clips,sizeof(clips));clipCount=0;scrollOffset=0;repaint();}if(id==3){SecureZeroMemory(files,sizeof(files));fileCount=0;scrollOffset=0;repaint();}if(id==4)DestroyWindow(win);if(id==5)showSettings(0);if(id==7)quickOpen();}
-static void activate(int id){if(primaryIndex(id)>=0){choose(id);if(id==7)showSettings(0);return;}switch(id){case 100:NativeMedia::control(0);break;case 101:NativeMedia::control(1);break;case 102:NativeMedia::control(2);break;case 103:media(VK_VOLUME_DOWN);break;case 104:media(VK_VOLUME_UP);break;case 201:SecureZeroMemory(files,sizeof(files));fileCount=0;scrollOffset=0;say(L"Shelf cleared. Your files are untouched.");break;case 301:SecureZeroMemory(clips,sizeof(clips));clipCount=0;scrollOffset=0;say(L"Clipboard history cleared.");break;case 501:case 502:case 503:case 504:
-    if(!LaunchTargets::shortcut(win,prefs.launcherTargets[id-501]))say(L"Windows couldn’t open that shortcut.");
-    break;
-case 510:showWorkstationSettings(-1,true);break;
+static void activate(int id){
+    if(id>=appHitBase&&id<appHitBase+appLimit){
+        if(!LaunchTargets::shortcut(win,prefs.apps[id-appHitBase].path))say(L"Windows couldn’t open that shortcut.");
+        return;
+    }
+    if(primaryIndex(id)>=0){choose(id);if(id==7)showSettings(0);return;}switch(id){case 100:NativeMedia::control(0);break;case 101:NativeMedia::control(1);break;case 102:NativeMedia::control(2);break;case 103:media(VK_VOLUME_DOWN);break;case 104:media(VK_VOLUME_UP);break;case 201:SecureZeroMemory(files,sizeof(files));fileCount=0;scrollOffset=0;say(L"Shelf cleared. Your files are untouched.");break;case 301:SecureZeroMemory(clips,sizeof(clips));clipCount=0;scrollOffset=0;say(L"Clipboard history cleared.");break;case 510:showWorkstationSettings(-1,true);break;
 case 511:showWorkstationSettings();break;
 case 506:showSettings(3);break;
-case 601:inBreak=false;focus=!focus;focusTotalSeconds=prefs.focusMinutes*60;deadline=GetTickCount64()+(ULONGLONG)prefs.focusMinutes*60000;SetTimer(win,1,1000,0);repaint();break;case 701:animations=!animations;saveSettings();if(!animations){openness=toOpen;moving=tabMoving=hoverMoving=false;tabReveal=hoverReveal=1;indicator=indicatorIndex(selected);KillTimer(win,3);if(frameClock)CancelWaitableTimer(frameClock);if(frameTimer)timeEndPeriod(1);frameTimer=false;place();}repaint();break;case 702:docked=!docked;saveSettings();place();repaint();break;case 703:case 900:pinned=!pinned;repaint();break;case 705:showSettings(0);break;case 706:showSettings(4);break;case 704:DestroyWindow(win);break;case 801:case 802:{
+case 507:if(showSettings(3))SendMessage(settingsWindow,WM_COMMAND,420,0);break;
+case 508:scrollApps(-1);break;
+case 509:scrollApps(1);break;
+case 601:inBreak=false;focus=!focus;focusTotalSeconds=prefs.focusMinutes*60;deadline=GetTickCount64()+(ULONGLONG)prefs.focusMinutes*60000;SetTimer(win,1,1000,0);repaint();break;case 701:animations=!animations;saveSettings();if(!animations){openness=toOpen;moving=tabMoving=hoverMoving=false;tabReveal=hoverReveal=1;KillTimer(win,3);if(frameClock)CancelWaitableTimer(frameClock);if(frameTimer)timeEndPeriod(1);frameTimer=false;place();}repaint();break;case 702:docked=!docked;saveSettings();place();repaint();break;case 703:case 900:pinned=!pinned;repaint();break;case 705:showSettings(0);break;case 706:showSettings(4);break;case 704:DestroyWindow(win);break;case 801:case 802:{
     bool glass=id==801;
     if(prefs.glassMode!=glass){prefs.glassMode=glass;OpticalGlass::release();saveSettings();place();repaint();}
     break;
 }
-case 803:showSettings(0);break;case 901:choose(8);break;case 902:choose(9);break;
+case 803:showSettings(0);break;case 901:choose(8);break;
+case 902:connectorFeed=0;scrollOffset=0;choose(9);repaint();break;
+case 707:case 903:{
+    wchar_t result[150]={};
+    BackgroundApps::clear(win,result);
+    if(result[0])say(result);
+    break;
+}
 case 950:case 951:case 954:connectorFeed=id==954?2:id-950;scrollOffset=0;repaint();break;
 case 952:showSettings(5+connectorFeed);break;
 case 953:if(connectorFeed!=2){Connectors::refresh();say(L"Refreshing enabled connectors…");}break;
 case 955:say(DiscordVoice::toggleMute());break;
 case 956:if(!DiscordVoice::openApp(win))say(L"Install the Discord desktop app first.");break;
 default:if(id>=720&&id<720+workstationCount)runWorkstation(id-720);if(id>=730&&id<730+workstationCount)showWorkstationSettings(id-730);if(id>=960&&id<980){int i=id-960;if(!connectorFeed&&i<connectorView.mailCount&&Connectors::mailId(connectorView.mail[i].id)){wchar_t url[180],mail[80];ConnectorNet::wide(connectorView.mail[i].id,mail,80);swprintf_s(url,L"https://mail.google.com/mail/u/0/#inbox/%s",mail);open(url);}else if(connectorFeed&&i<connectorView.phoneCount){auto& p=connectorView.phone[i];wchar_t detail[1100];swprintf_s(detail,L"%s\r\n\r\n%s",p.title,p.body);MessageBox(win,detail,p.app,MB_OK|MB_ICONINFORMATION);}}if(id>=210&&id<222&&id-210<fileCount){wchar_t args[MAX_PATH+30];swprintf_s(args,L"/select,\"%s\"",files[id-210]);ShellExecute(win,L"open",L"explorer.exe",args,0,SW_SHOWNORMAL);}if(id>=310&&id<322)copyClip(id-310);}}
-static void tickAnimation(){double clock=profileNow();if(moving){if(frameLast){double interval=clock-frameLast;frameSum+=interval;frameCount++;if(interval>frameWorst)frameWorst=interval;}frameLast=clock;}ULONGLONG now=GetTickCount64();if(moving){double t=(now-motionStart)/(expanded?(double)prefs.animationMs:prefs.animationMs*.733);double spring=t>=1?1:1-exp(-9*t)*(cos(7*t)+9.0/7*sin(7*t));openness=lerp(fromOpen,toOpen,spring);if(t>=1){openness=toOpen;moving=false;if(!expanded)releaseBuffer();}place();}if(tabMoving){double t=(now-tabStart)/190.0;tabReveal=lerp(slideFrom,slideGoal,ease(t));indicator=lerp(indicatorFrom,indicatorIndex(selected),tabReveal);if(t>=1){tabMoving=false;tabReveal=slideGoal;repaint();}}if(hoverMoving){double t=(now-hoverStart)/120.0;hoverReveal=ease(t);if(t>=1){hoverMoving=false;previousHover=-1;}}animationTimer();if(tabMoving||hoverMoving||(expanded&&selected==0&&((prefs.waveformEnabled&&nowPlaying.status==4)||titleOverflow)&&now-lastMusicPaint>=33)){lastMusicPaint=now;repaint();}else if(moving)InvalidateRect(win,0,FALSE);}
+static void tickAnimation(){double clock=profileNow();if(moving){if(frameLast){double interval=clock-frameLast;frameSum+=interval;frameCount++;if(interval>frameWorst)frameWorst=interval;}frameLast=clock;}ULONGLONG now=GetTickCount64();if(moving){double t=(now-motionStart)/(expanded?(double)prefs.animationMs:prefs.animationMs*.733);double spring=t>=1?1:1-exp(-9*t)*(cos(7*t)+9.0/7*sin(7*t));openness=lerp(fromOpen,toOpen,spring);if(t>=1){openness=toOpen;moving=false;if(!expanded)releaseBuffer();}place();}if(tabMoving){double t=(now-tabStart)/190.0;tabReveal=lerp(slideFrom,slideGoal,ease(t));if(t>=1){tabMoving=false;tabReveal=slideGoal;repaint();}}if(hoverMoving){double t=(now-hoverStart)/120.0;hoverReveal=ease(t);if(t>=1){hoverMoving=false;previousHover=-1;}}animationTimer();if(tabMoving||hoverMoving||(expanded&&selected==0&&((prefs.waveformEnabled&&nowPlaying.status==4)||titleOverflow)&&now-lastMusicPaint>=33)){lastMusicPaint=now;repaint();}else if(moving)InvalidateRect(win,0,FALSE);}
 static LRESULT CALLBACK proc(HWND h,UINT msg,WPARAM wp,LPARAM lp){switch(msg){
 case WM_MOUSEMOVE:{if(paused)return 0;if(swipeCandidate&&(wp&MK_LBUTTON)){moveSwipe((int)(GET_X_LPARAM(lp)/F(1)),(int)(GET_Y_LPARAM(lp)/F(1)));if(swiping)return 0;}if(pressed==105){setVolumeAt((int)(GET_X_LPARAM(lp)/F(1)));return 0;}
 if(!tracking){TRACKMOUSEEVENT t={sizeof(t),TME_LEAVE,h,0};TrackMouseEvent(&t);tracking=true;}KillTimer(h,2);
-if(prefs.hoverEnabled&&!expanded&&!moving){
-    SetTimer(h,5,prefs.hoverDelay,0);
-    if(prefs.glassMode&&!OpticalGlass::surface){
-        configureMaterial();MONITORINFO mi=islandMonitor();int w=S(fullWidth*1.025),hh=S(fullHeight*1.025);
-        syncGlass(islandX(mi,w),mi.rcWork.top,w,hh);
-    }
-}
+if(prefs.hoverEnabled&&!expanded&&!moving)SetTimer(h,5,prefs.hoverDelay,0);
 int id=hitAt((int)(MulDiv(GET_X_LPARAM(lp),96,dpi)/uiScale),(int)(MulDiv(GET_Y_LPARAM(lp),96,dpi)/uiScale));if(id!=hover){previousHover=hover;hover=id;hoverReveal=animations?0:1;hoverStart=GetTickCount64();hoverMoving=animations;animationTimer();repaint();}SetCursor(LoadCursor(0,id>=0?IDC_HAND:IDC_ARROW));return 0;}
 case WM_MOUSELEAVE:if(!expanded&&!moving)OpticalGlass::release();tracking=false;KillTimer(h,5);previousHover=hover;hover=-1;hoverReveal=animations?0:1;hoverStart=GetTickCount64();hoverMoving=animations;animationTimer();if(!pinned&&!swipeCandidate&&pressed<0)SetTimer(h,2,prefs.closeDelay,0);repaint();return 0;
-case WM_TIMER:if(wp==6){pauseFor(0);return 0;}if(wp==3)tickAnimation();else if(wp==5){KillTimer(h,5);if(tracking)expand(true);}else if(wp==4){KillTimer(h,4);status[0]=0;repaint();}else if(wp==2){KillTimer(h,2);POINT p;GetCursorPos(&p);RECT r;GetWindowRect(h,&r);ScreenToClient(win,&p);HRGN hit=CreateRectRgn(0,0,0,0);GetWindowRgn(win,hit);bool inside=PtInRegion(hit,p.x,p.y)!=FALSE;DeleteObject(hit);if(!pinned&&!inside&&GetCapture()!=h)expand(false);}else if(wp==1){if(focus&&GetTickCount64()>=deadline){bool finishingBreak=inBreak;bool startingBreak=prefs.automaticBreak&&!inBreak;focus=startingBreak;inBreak=startingBreak;if(startingBreak)focusTotalSeconds=prefs.breakMinutes*60;if(startingBreak)deadline=GetTickCount64()+(ULONGLONG)prefs.breakMinutes*60000;say(startingBreak?L"Focus complete. Your break has started.":L"Session complete.");tray.uFlags=NIF_INFO;wcscpy_s(tray.szInfoTitle,finishingBreak?L"Break complete":L"Focus complete");swprintf_s(tray.szInfo,startingBreak?L"Your %d minute focus session is complete. A %d minute break has started.":L"Your session is complete. Take a moment before the next one.",prefs.focusMinutes,prefs.breakMinutes);Shell_NotifyIcon(NIM_MODIFY,&tray);if(!expanded&&!focus)KillTimer(h,1);}if(expanded){if(selected==0){NativeMedia::refresh();readVolume(false);}if(selected==3)sampleCpu();repaint();}}return 0;
-case WM_LBUTTONDOWN:pressed=hitAt((int)(MulDiv(GET_X_LPARAM(lp),96,dpi)/uiScale),(int)(MulDiv(GET_Y_LPARAM(lp),96,dpi)/uiScale));if(prefs.swipeEnabled&&expanded&&!moving&&!tabMoving&&GET_Y_LPARAM(lp)>=S(58)&&pressed!=105&&pressed!=106){beginSwipe((int)(GET_X_LPARAM(lp)/F(1)),(int)(GET_Y_LPARAM(lp)/F(1)));SetCapture(h);}else if(pressed>=0)SetCapture(h);if(pressed==105)setVolumeAt((int)(GET_X_LPARAM(lp)/F(1)));repaint();return 0;
+case WM_TIMER:if(wp==6){pauseFor(0);return 0;}if(wp==3)tickAnimation();else if(wp==5){KillTimer(h,5);if(tracking)expand(true);}else if(wp==4){KillTimer(h,4);status[0]=0;repaint();}else if(wp==2){KillTimer(h,2);POINT p;GetCursorPos(&p);RECT r;GetWindowRect(h,&r);ScreenToClient(win,&p);HRGN hit=CreateRectRgn(0,0,0,0);GetWindowRgn(win,hit);bool inside=PtInRegion(hit,p.x,p.y)!=FALSE;DeleteObject(hit);if(!pinned&&!inside&&GetCapture()!=h)expand(false);}else if(wp==1){if(focus&&GetTickCount64()>=deadline){bool finishingBreak=inBreak;bool startingBreak=prefs.automaticBreak&&!inBreak;focus=startingBreak;inBreak=startingBreak;if(startingBreak)focusTotalSeconds=prefs.breakMinutes*60;if(startingBreak)deadline=GetTickCount64()+(ULONGLONG)prefs.breakMinutes*60000;say(startingBreak?L"Focus complete. Your break has started.":L"Session complete.");tray.uFlags=NIF_INFO;wcscpy_s(tray.szInfoTitle,finishingBreak?L"Break complete":L"Focus complete");swprintf_s(tray.szInfo,startingBreak?L"Your %d minute focus session is complete. A %d minute break has started.":L"Your session is complete. Take a moment before the next one.",prefs.focusMinutes,prefs.breakMinutes);Shell_NotifyIcon(NIM_MODIFY,&tray);if(!expanded&&!focus)KillTimer(h,1);}if(expanded){
+    if(prefs.glassMode&&!moving&&glassForeground!=GetForegroundWindow()){
+        RECT glass;GetWindowRect(win,&glass);
+        syncGlass(glass.left,glass.top,glass.right-glass.left,glass.bottom-glass.top);
+    }
+    if(selected==0){NativeMedia::refresh();readVolume(false);}if(selected==3)sampleCpu();repaint();}}return 0;
+case WM_LBUTTONDOWN:pressed=hitAt((int)(MulDiv(GET_X_LPARAM(lp),96,dpi)/uiScale),(int)(MulDiv(GET_Y_LPARAM(lp),96,dpi)/uiScale));if(prefs.swipeEnabled&&expanded&&!moving&&!tabMoving&&GET_Y_LPARAM(lp)>=S(pageTop)&&pressed!=105&&pressed!=106){beginSwipe((int)(GET_X_LPARAM(lp)/F(1)),(int)(GET_Y_LPARAM(lp)/F(1)));SetCapture(h);}else if(pressed>=0)SetCapture(h);if(pressed==105)setVolumeAt((int)(GET_X_LPARAM(lp)/F(1)));repaint();return 0;
 case WM_LBUTTONUP:{if(swiping){finishSwipe();pressed=-1;if(GetCapture()==h)ReleaseCapture();return 0;}swipeCandidate=false;int id=hitAt((int)(MulDiv(GET_X_LPARAM(lp),96,dpi)/uiScale),(int)(MulDiv(GET_Y_LPARAM(lp),96,dpi)/uiScale));bool wasPressed=pressed==id;if(pressed==105){setVolumeAt((int)(GET_X_LPARAM(lp)/F(1)));id=-1;}if(pressed==106&&nowPlaying.duration>0){double fraction=((GET_X_LPARAM(lp)/F(1))-34)/612;if(fraction<0)fraction=0;if(fraction>1)fraction=1;NativeMedia::seek((LONGLONG)(fraction*nowPlaying.duration));id=-1;}pressed=-1;if(GetCapture()==h)ReleaseCapture();if(!pinned)SetTimer(h,2,prefs.closeDelay,0);if(!expanded)expand(true);else if(id>=0&&wasPressed)activate(id);repaint();return 0;}
 case WM_CAPTURECHANGED:if(swiping)finishSwipe(true);swipeCandidate=false;pressed=-1;return 0;
 case WM_CANCELMODE:finishSwipe(true);if(GetCapture()==h)ReleaseCapture();return 0;
-case WM_GESTURE:{if(!prefs.swipeEnabled)return DefWindowProc(h,msg,wp,lp);GESTUREINFO info={sizeof(info)};if(!GetGestureInfo((HGESTUREINFO)lp,&info))return DefWindowProc(h,msg,wp,lp);if(info.dwID!=GID_PAN)return DefWindowProc(h,msg,wp,lp);POINT point={info.ptsLocation.x,info.ptsLocation.y};ScreenToClient(h,&point);int x=(int)(point.x/F(1)),y=(int)(point.y/F(1));if(info.dwFlags&GF_BEGIN){int id=hitAt(x,y);if(y<58||id==105||id==106){CloseGestureInfoHandle((HGESTUREINFO)lp);return 0;}beginSwipe(x,y);}else moveSwipe(x,y);if(info.dwFlags&GF_END)finishSwipe();CloseGestureInfoHandle((HGESTUREINFO)lp);return 0;}
+case WM_GESTURE:{if(!prefs.swipeEnabled)return DefWindowProc(h,msg,wp,lp);GESTUREINFO info={sizeof(info)};if(!GetGestureInfo((HGESTUREINFO)lp,&info))return DefWindowProc(h,msg,wp,lp);if(info.dwID!=GID_PAN)return DefWindowProc(h,msg,wp,lp);POINT point={info.ptsLocation.x,info.ptsLocation.y};ScreenToClient(h,&point);int x=(int)(point.x/F(1)),y=(int)(point.y/F(1));if(info.dwFlags&GF_BEGIN){int id=hitAt(x,y);if(y<pageTop||id==105||id==106){CloseGestureInfoHandle((HGESTUREINFO)lp);return 0;}beginSwipe(x,y);}else moveSwipe(x,y);if(info.dwFlags&GF_END)finishSwipe();CloseGestureInfoHandle((HGESTUREINFO)lp);return 0;}
 case WM_MOUSEHWHEEL:{if(!prefs.swipeEnabled)return 0;if(!expanded||moving||paused)return 0;ULONGLONG now=GetTickCount64();if(now-lastWheelEvent>300)horizontalWheel=0;lastWheelEvent=now;horizontalWheel+=GET_WHEEL_DELTA_WPARAM(wp);if(abs(horizontalWheel)>=60&&now-lastWheel>=190){int direction=horizontalWheel>0?1:-1;choose(nextPrimaryPage(selected,direction),direction);horizontalWheel=0;lastWheel=now;}return 0;}
-case WM_MOUSEWHEEL:{if(prefs.swipeEnabled&&(GET_KEYSTATE_WPARAM(wp)&MK_SHIFT)){int direction=GET_WHEEL_DELTA_WPARAM(wp)<0?1:-1;choose(nextPrimaryPage(selected,direction),direction);return 0;}int count=selected==1?fileCount:selected==2?clipCount:selected==9?(connectorFeed?connectorView.phoneCount:connectorView.mailCount):0;scrollOffset+=GET_WHEEL_DELTA_WPARAM(wp)<0?1:-1;if(scrollOffset<0)scrollOffset=0;int rows=selected==9?2:3;if(scrollOffset>count-rows)scrollOffset=count>rows?count-rows:0;repaint();return 0;}
+case WM_MOUSEWHEEL:{if(prefs.swipeEnabled&&(GET_KEYSTATE_WPARAM(wp)&MK_SHIFT)){int direction=GET_WHEEL_DELTA_WPARAM(wp)<0?1:-1;choose(nextPrimaryPage(selected,direction),direction);return 0;}
+    if(selected==5){
+        if(expanded&&!moving&&!tabMoving&&!swiping){
+            appWheel+=GET_WHEEL_DELTA_WPARAM(wp);
+            int rows=appWheel/WHEEL_DELTA;
+            appWheel%=WHEEL_DELTA;
+            if(rows)scrollApps(-rows);
+        }
+        return 0;
+    }
+    int count=selected==1?fileCount:selected==2?clipCount:selected==9?(connectorFeed?connectorView.phoneCount:connectorView.mailCount):0;scrollOffset+=GET_WHEEL_DELTA_WPARAM(wp)<0?1:-1;if(scrollOffset<0)scrollOffset=0;int rows=selected==9?2:3;if(scrollOffset>count-rows)scrollOffset=count>rows?count-rows:0;repaint();return 0;}
 case WM_RBUTTONUP:menu();return 0;
 case WM_DROPFILES:{HDROP drop=(HDROP)wp;UINT count=DragQueryFile(drop,0xffffffff,0,0);for(UINT i=0;i<count&&fileCount<12;i++){UINT len=DragQueryFile(drop,i,0,0);if(len<MAX_PATH&&DragQueryFile(drop,i,files[fileCount],MAX_PATH))fileCount++;}DragFinish(drop);scrollOffset=0;expand(true);choose(1);repaint();return 0;}
 case WM_CLIPBOARDUPDATE:captureClipboard();return 0;
-case WM_HOTKEY:if(wp==3){pauseFor(paused?0:30);return 0;}if(!paused&&wp==2){pinned=!pinned;expand(pinned);}return 0;
-case WM_APP+1:if(lp==WM_RBUTTONUP)menu();if(lp==WM_LBUTTONUP){if(paused)pauseFor(0);else{pinned=!pinned;expand(pinned);}}return 0;
+case WM_HOTKEY:if(wp==3){pauseFor(paused?0:30);return 0;}if(!paused&&wp==2)toggleIsland();return 0;
+case WM_APP+1:if(lp==WM_RBUTTONUP)menu();if(lp==WM_LBUTTONUP){if(paused)pauseFor(0);else toggleIsland();}return 0;
 case WM_APP+90:{auto* update=(Connectors::View*)lp;if(update){connectorView=*update;SecureZeroMemory(update,sizeof(*update));HeapFree(GetProcessHeap(),0,update);if(settingsWindow)updateConnectorStatus();if(expanded&&selected==9)repaint();}return 0;}
 case SpotifyPlayback::finishedMessage:
     if(wp){updateSpotifySettings();if(settingsWindow&&settingsPage==workstationSettingsPage)settingsError((const wchar_t*)lp);}
@@ -846,13 +919,14 @@ case WM_APP+91:return (prefs.gmailEnabled?1:0)|(prefs.androidEnabled?2:0)|(prefs
 case WM_APP+92:return connectorView.mailCount;case WM_APP+93:return connectorView.phoneCount;
 case WM_APP+80:return settingsPage;case WM_APP+81:return focus;case WM_APP+82:return focus&&deadline>GetTickCount64()?(LRESULT)(deadline-GetTickCount64()):0;
 case WM_APP+61:showSettings(0);return 0;
-case WM_APP+60:if(paused)pauseFor(0);pinned=!expanded;expand(pinned);repaint();return 0;
+case WM_APP+60:if(paused)pauseFor(0);toggleIsland();return 0;
 case WM_APP+2:return (moving?1:0)|(tabMoving?2:0)|(hoverMoving?4:0)|((frameTimer&&!(expanded&&selected==0&&nowPlaying.status==4))?8:0);
 case WM_APP+3:return selected;
 case WM_APP+4:return paused;
 case WM_APP+6:return (LRESULT)OpticalGlass::renderMs;
 case WM_APP+7:return OpticalGlass::surface!=0;
 case WM_APP+8:return expanded;
+case WM_APP+83:return pinned;
 case WM_APP+30:{
     auto* data=(NativeMedia::Snapshot*)lp;if(wcscmp(nowPlaying.title,data->title))titleStarted=GetTickCount64();nowPlaying=*data;mediaReceived=GetTickCount64();nowPlaying.artwork=0;animationTimer();
     if(data->artChanged){if(albumArt){delete albumArt;albumArt=0;}if(data->artwork){IStream* stream=0;if(SUCCEEDED(CreateStreamOnHGlobal(data->artwork,TRUE,&stream))){data->artwork=0;Bitmap* image=Bitmap::FromStream(stream);if(image&&image->GetLastStatus()==Ok&&image->GetWidth()<=2048&&image->GetHeight()<=2048){albumArt=new Bitmap(128,128,PixelFormat32bppPARGB);Graphics canvas(albumArt);canvas.SetInterpolationMode(InterpolationModeHighQualityBicubic);canvas.DrawImage(image,0,0,128,128);}delete image;stream->Release();}}}
@@ -890,7 +964,7 @@ case WM_DESTROY:LauncherIcons::releaseAll();SpotifyPlayback::stop();Connectors::
 default:if(msg==taskbarMessage){excludeOverlayFromShell(win);excludeOverlayFromShell(glassWindow);tray.uFlags=NIF_MESSAGE|NIF_ICON|NIF_TIP;Shell_NotifyIcon(NIM_ADD,&tray);}return DefWindowProc(h,msg,wp,lp);}}
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR args,int){defaultPreferences(prefs);QueryPerformanceFrequency(&profileFrequency);singleton=CreateMutex(0,TRUE,L"Local\\WinPixel.Native.Singleton");if(GetLastError()==ERROR_ALREADY_EXISTS){
     if(wcsstr(args,L"--toggle")||wcsstr(args,L"--show")||wcsstr(args,L"--settings")){HWND running=0;for(int i=0;i<80&&!running;i++){running=FindWindow(L"WinPixelIsland",0);if(!running)Sleep(25);}if(running){DWORD_PTR result=0;SendMessageTimeout(running,wcsstr(args,L"--settings")?WM_APP+61:WM_APP+60,0,0,SMTO_ABORTIFHUNG,1500,&result);}}
-    CloseHandle(singleton);return 0;}SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);CoInitializeEx(0,COINIT_APARTMENTTHREADED);GdiplusStartupInput input;GdiplusStartup(&graphicsToken,&input,0);saveEnabled=!wcsstr(args,L"--test")&&!wcsstr(args,L"--render");if(saveEnabled)loadSettings();if(wcsstr(args,L"--render")){int result=renderPreviews();GdiplusShutdown(graphicsToken);CoUninitialize();CloseHandle(singleton);return result;}WNDCLASS wc={};wc.lpfnWndProc=proc;wc.hInstance=instance;wc.lpszClassName=L"WinPixelIsland";wc.hCursor=LoadCursor(0,IDC_ARROW);RegisterClass(&wc);bool showOnLaunch=wcsstr(args,L"--toggle")||wcsstr(args,L"--show");bool preview=wcsstr(args,L"--preview")!=0;if(preview||showOnLaunch){expanded=pinned=true;openness=fromOpen=toOpen=1;}win=CreateWindowEx(WS_EX_LAYERED|WS_EX_TOPMOST|(WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE),wc.lpszClassName,appName(),WS_POPUP,0,0,smallWidth,smallHeight,0,0,instance,0);WNDCLASS glassClass={};glassClass.lpfnWndProc=glassProc;glassClass.hInstance=instance;glassClass.lpszClassName=L"WinPixelGlass";glassClass.hCursor=LoadCursor(0,IDC_ARROW);RegisterClass(&glassClass);
+    CloseHandle(singleton);return 0;}SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);CoInitializeEx(0,COINIT_APARTMENTTHREADED);GdiplusStartupInput input;GdiplusStartup(&graphicsToken,&input,0);saveEnabled=!wcsstr(args,L"--test")&&!wcsstr(args,L"--render");if(saveEnabled)loadSettings();if(wcsstr(args,L"--render")){int result=renderPreviews();GdiplusShutdown(graphicsToken);CoUninitialize();CloseHandle(singleton);return result;}WNDCLASS wc={};wc.lpfnWndProc=proc;wc.hInstance=instance;wc.lpszClassName=L"WinPixelIsland";wc.hCursor=LoadCursor(0,IDC_ARROW);RegisterClass(&wc);bool showOnLaunch=wcsstr(args,L"--toggle")||wcsstr(args,L"--show");bool preview=wcsstr(args,L"--preview")!=0;if(preview||showOnLaunch){expanded=true;openness=fromOpen=toOpen=1;}win=CreateWindowEx(WS_EX_LAYERED|WS_EX_TOPMOST|(WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE),wc.lpszClassName,appName(),WS_POPUP,0,0,smallWidth,smallHeight,0,0,instance,0);WNDCLASS glassClass={};glassClass.lpfnWndProc=glassProc;glassClass.hInstance=instance;glassClass.lpszClassName=L"WinPixelGlass";glassClass.hCursor=LoadCursor(0,IDC_ARROW);RegisterClass(&glassClass);
     glassWindow=CreateWindowEx(WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE|WS_EX_TOPMOST,L"WinPixelGlass",L"BezelBrew glass",WS_POPUP,0,0,1,1,0,0,instance,0);SetWindowLongPtr(win,GWLP_HWNDPARENT,(LONG_PTR)glassWindow);DragAcceptFiles(glassWindow,TRUE);
     frameStop=CreateEvent(0,TRUE,FALSE,0);frameClock=CreateWaitableTimerEx(0,0,2,TIMER_ALL_ACCESS);if(frameClock)frameThread=CreateThread(0,65536,frameWorker,0,0,0);if(!frameThread&&frameClock){CloseHandle(frameClock);frameClock=0;}GESTURECONFIG gesture={GID_PAN,GC_PAN|GC_PAN_WITH_SINGLE_FINGER_HORIZONTALLY,GC_PAN_WITH_SINGLE_FINGER_VERTICALLY};SetGestureConfig(win,0,1,&gesture,sizeof(gesture));NativeMedia::start(win);Connectors::start(win,connectorConfig());dpi=GetDpiForWindow(win);createFonts();setupTooltips();place();if(preview||showOnLaunch){SetTimer(win,1,1000,0);NativeMedia::refresh();readVolume(true);}DragAcceptFiles(win,TRUE);AddClipboardFormatListener(win);// Ctrl+Alt+N is owned by the Windows launch shortcut, so it also works after Quit.
 bool pauseRegistered=RegisterHotKey(win,3,MOD_WIN|MOD_ALT|MOD_NOREPEAT,'N');tray.hWnd=win;tray.uID=1;tray.uFlags=NIF_MESSAGE|NIF_ICON|NIF_TIP;tray.uCallbackMessage=WM_APP+1;tray.hIcon=brandIcon(GetSystemMetrics(SM_CXSMICON),GetSystemMetrics(SM_CYSMICON));swprintf_s(tray.szTip,L"%s • right-click for menu",appName());Shell_NotifyIcon(NIM_ADD,&tray);taskbarMessage=RegisterWindowMessage(L"TaskbarCreated");ShowWindow(win,SW_SHOWNOACTIVATE);excludeOverlayFromShell(win);excludeOverlayFromShell(glassWindow);if(!pauseRegistered)say(L"Win+Alt+N is in use. Pause from the tray menu.");if(wcsstr(args,L"--settings"))showSettings(0);MSG msg;while(GetMessage(&msg,0,0,0)>0){if(settingsWindow&&IsDialogMessage(settingsWindow,&msg))continue;TranslateMessage(&msg);DispatchMessage(&msg);}for(int i=0;i<5;i++)DeleteObject(fonts[i]);GdiplusShutdown(graphicsToken);CoUninitialize();CloseHandle(singleton);return 0;}

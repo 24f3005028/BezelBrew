@@ -80,7 +80,7 @@ static void describe(const Workstation& station,wchar_t (&summary)[96]){
     int apps=0,tabs=0;
     for(const auto& app:station.apps)if(app.path[0])apps++;
     for(const auto& tab:station.tabs)if(tab[0])tabs++;
-    if(!apps&&!tabs&&!station.track[0]){
+    if(!apps&&!tabs&&!station.spotify[0]){
         wcscpy_s(summary,L"No items added");
         return;
     }
@@ -90,7 +90,7 @@ static void describe(const Workstation& station,wchar_t (&summary)[96]){
         swprintf_s(count,L"%s%d tab%s",apps?L"  ·  ":L"",tabs,tabs==1?L"":L"s");
         wcscat_s(summary,count);
     }
-    if(station.track[0])wcscat_s(summary,apps||tabs?L"  ·  Spotify":L"Spotify");
+    if(station.spotify[0])wcscat_s(summary,apps||tabs?L"  ·  Spotify":L"Spotify");
 }
 static INT_PTR CALLBACK procedure(HWND dialog,UINT message,WPARAM wp,LPARAM lp){
     using namespace SettingsSkin;
@@ -145,7 +145,7 @@ static INT_PTR CALLBACK procedure(HWND dialog,UINT message,WPARAM wp,LPARAM lp){
         };
         if(state->empty){
             label(L"No workstations yet",2305,80,25,348,27,true);
-            label(L"Save a set of apps, browser tabs, and a Spotify track to open together.",statusId,80,58,332,48);
+            label(L"Save a set of apps, browser tabs, and Spotify music to open together.",statusId,80,58,332,48);
             button(L"Close",IDCANCEL,157,85);
             button(L"Create workstation…",extraId,253,177,true);
             SendMessage(dialog,DM_SETDEFID,extraId,0);
