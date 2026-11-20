@@ -22,14 +22,16 @@ static HDC canvas=0;
 static HBITMAP canvasBitmap=0;
 static HGDIOBJ canvasOld=0;
 static int canvasWidth=0,canvasHeight=0,scroll=0;
-static const wchar_t* sections[]={L"Appearance",L"Behavior",L"Tools",L"Apps",L"Notes",L"Gmail",L"Phone",L"Discord",L"Shortcuts",L"Workstations"};
+static const wchar_t* sections[]={L"Appearance",L"Behavior",L"Tools",L"Apps",L"Notes",L"Gmail",L"Phone",L"Discord",L"Shortcuts",L"Workstations",L"Top bar"};
 static const wchar_t* descriptions[]={
     L"Choose how the desktop island looks.",L"Set where the island appears and how it opens.",
     L"Configure clipboard history, focus sessions, and startup.",L"Manage the shortcuts shown on the island.",
     L"Edit the quick note shown in Widgets.",L"Manage the inbox shown on the island.",
     L"Set up Android or iPhone notifications.",L"Use Discord’s desktop mute shortcut.",
     L"Keyboard and trackpad controls for the desktop island.",
-    L"Create and edit sets of apps, browser tabs, and music."};
+    L"Create and edit sets of apps, browser tabs, and music.",
+    L"Turn tiles on or off. Use Earlier and Later to change their order."};
+static_assert(ARRAYSIZE(sections)==settingsPageCount&&ARRAYSIZE(descriptions)==settingsPageCount);
 static Color foreground(){return Color(255,241,241,246);}
 static Color muted(){return Color(255,174,175,190);}
 static Color surface(){return Color(255,24,24,31);}
@@ -98,6 +100,7 @@ static void glyph(Graphics& g,int which,float x,float y,float size,Color color){
     case 8:r(2,5,20,14,3);for(int i=0;i<6;i++)l(5+i*2.8f,9,5+i*2.8f,10);l(7,15,17,15);break;
     case 9:l(5,12,10,17);l(10,17,19,7);break;
     case 10:r(3,4,18,16,3);l(12,4,12,20);l(3,11,12,11);break;
+    case 11:for(int i=0;i<3;i++)r(2+i*7,8,5,8,1);break;
     }
     g.Restore(state);
 }
@@ -210,7 +213,8 @@ static void drawControl(HWND h,HDC dc,Item& model){
         Color tint=selected?Color(255,43,45,69):blend(bg,field(),hover);
         rect(g,D(1),D(1),w-D(2),hh-D(2),D(8),tint);
         if(selected)rect(g,D(1),D(11),D(3),hh-D(22),D(2),brand());
-        glyph(g,page==workstationSettingsPage?10:page,D(13),(hh-D(18))*.5f,D(18),selected?brand():muted());
+        const int icon=page==workstationSettingsPage?10:page==toolbarSettingsPage?11:page;
+        glyph(g,icon,D(13),(hh-D(18))*.5f,D(18),selected?brand():muted());
         label.left=D(42);text(g,dc,value,label,selected?emphasisFont:bodyFont,selected?foreground():muted());
         if(focused)rect(g,D(2),D(2),w-D(4),hh-D(4),D(7),Color(0,0,0,0),brand());
         return;

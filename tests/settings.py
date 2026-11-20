@@ -73,6 +73,14 @@ try:
  tab(2);assert u.SendMessageW(item(301),0x146,0,0)==8,'Starting section still includes Quick Controls'
  u.SendMessageW(item(301),0x14e,7,0);set_text(306,45);set_text(307,7);u.SendMessageW(item(308),0xf1,1,0);click(9002)
  assert 'focusMinutes=45' in saved() and 'automaticBreak=1' in saved()
+ tab(10)
+ assert text(9200)=='Music' and text(9201)=='Shelf','Default top bar order changed'
+ click(9240)
+ assert text(9200)=='Shelf' and text(9201)=='Music','Moving a tile did not reorder the editor'
+ u.SendMessageW(item(9201),0xf1,0,0);click(9201)
+ u.SendMessageW(item(9209),0xf1,0,0);click(9209)
+ click(9002)
+ assert 'Order=1,0,2,3,4,5,6,7,8,9,10,11' in saved() and 'Visible=3582' in saved()
  tab(3)
  assert text(8700)=='File Explorer' and not u.GetDlgItem(window,402),'Apps showed a raw target outside the editor'
  click(420);set_text(401,'My browser');set_text(402,'https://example.com');click(423)
@@ -95,6 +103,11 @@ try:
  click(8200)
  assert text(116)=='FFB6D3','Switching material did not restore the saved inactive color'
  click(8201)
+ tab(10)
+ assert text(9200)=='Shelf' and text(9201)=='Music','Top bar order did not survive restart'
+ assert u.SendMessageW(item(9201),0xf0,0,0)==0 and u.SendMessageW(item(9209),0xf0,0,0)==0,'Hidden tiles did not survive restart'
+ click(9260);click(9002)
+ assert text(9200)=='Music' and 'Visible=4095' in saved(),'Restoring the toolbar defaults failed'
  tab(1);assert text(207)=='140' and text(205)=='260','Behavior did not restore'
  tab(2);assert text(306)=='45' and text(307)=='7','Focus settings did not restore'
  tab(3)

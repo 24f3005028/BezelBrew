@@ -45,13 +45,17 @@ at 100% display scaling. Its mouse-hit opacity is kept above zero.
   see its name. Use the droplet icon to switch between Glass and Solid.
   Settings > Appearance lets you customize the text color and the active
   material's background or tint.
+- In **Settings > Top bar**, turn tiles on or off and use **Earlier** and
+  **Later** to change their order. Swipes follow the visible main tabs.
+  Settings remains available from the Windows tray menu.
 - **Clear memory** lists supported background apps before closing them.
   Minimized or hidden WhatsApp, CurseForge, Discord, Telegram, and Slack can
   be closed. Chrome and Edge are also included while their windows are open.
   BezelBrew asks the browser to close normally before ending leftover processes.
   It skips visible chat and launcher windows, Windows processes, and other users' apps.
   File Explorer folder windows and standard Task Manager windows are closed normally.
-  The Windows shell stays running. Codex window closure is optional in the confirmation.
+  The Windows shell stays running. The confirmation includes Codex by default
+  when its window is open. Uncheck **Include Codex** to keep it running.
 - Appearance settings: smooth animations, top-edge notch shape, or floating
   rounded shape. Keep open is optional and off by default.
 - In Settings > Appearance, name the current look and select **Save theme**.

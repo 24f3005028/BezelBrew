@@ -2,6 +2,7 @@
 #define WIDEN(x) WIDEN_INNER(x)
 #pragma once
 #include "saved_themes.hpp"
+#include "toolbar_layout.hpp"
 struct Preferences {
     wchar_t displayName[64];
     int sizePercent,textPercent,accentRgb,cornerDip,blurPasses,tintPercent;
@@ -15,15 +16,17 @@ struct Preferences {
     Workstation workstations[workstationCount];
     SavedTheme themes[savedThemeCount];
     AppTarget apps[appLimit];
+    ToolbarLayout toolbar;
     wchar_t monitor[32],note[2048];
 };
 static Preferences prefs;
-static void defaultPreferences(Preferences& p){ZeroMemory(&p,sizeof(p));wcscpy_s(p.displayName,L"BezelBrew");p.gmailUnreadOnly=true;p.gmailRefresh=120;p.phoneRefresh=30;p.sizePercent=p.textPercent=100;p.accentRgb=0xa4aeff;p.glassMode=true;p.backgroundRgb=0x18181f;p.fontRgb=0xf5f5f7;p.glassTintRgb=0x454e64;p.cornerDip=18;p.blurPasses=1;p.tintPercent=28;p.hoverWidth=220;p.hoverHeight=7;p.hoverDelay=60;p.closeDelay=180;p.animationMs=300;p.alignment=1;p.hoverEnabled=p.waveformEnabled=p.swipeEnabled=p.clipboardEnabled=true;p.historyLimit=12;p.focusMinutes=25;p.breakMinutes=5;const wchar_t* names[]={L"File Explorer",L"Windows Settings",L"Calculator",L"Notepad"};const wchar_t* targets[]={L"explorer.exe",L"ms-settings:",L"calc.exe",L"notepad.exe"};for(int i=0;i<4;i++){wcscpy_s(p.apps[i].name,names[i]);wcscpy_s(p.apps[i].path,targets[i]);}}
+static void defaultPreferences(Preferences& p){ZeroMemory(&p,sizeof(p));p.toolbar=ToolbarLayout::defaults();wcscpy_s(p.displayName,L"BezelBrew");p.gmailUnreadOnly=true;p.gmailRefresh=120;p.phoneRefresh=30;p.sizePercent=p.textPercent=100;p.accentRgb=0xa4aeff;p.glassMode=true;p.backgroundRgb=0x18181f;p.fontRgb=0xf5f5f7;p.glassTintRgb=0x454e64;p.cornerDip=18;p.blurPasses=1;p.tintPercent=28;p.hoverWidth=220;p.hoverHeight=7;p.hoverDelay=60;p.closeDelay=180;p.animationMs=300;p.alignment=1;p.hoverEnabled=p.waveformEnabled=p.swipeEnabled=p.clipboardEnabled=true;p.historyLimit=12;p.focusMinutes=25;p.breakMinutes=5;const wchar_t* names[]={L"File Explorer",L"Windows Settings",L"Calculator",L"Notepad"};const wchar_t* targets[]={L"explorer.exe",L"ms-settings:",L"calc.exe",L"notepad.exe"};for(int i=0;i<4;i++){wcscpy_s(p.apps[i].name,names[i]);wcscpy_s(p.apps[i].path,targets[i]);}}
 static void workstationSection(int index,wchar_t (&section)[32]){
     swprintf_s(section,L"Workstation%d",index+1);
 }
 static void readPreferences(const wchar_t* file,Preferences& p){
     SavedThemes::loadLibrary(file,p.themes);
+    p.toolbar.load(file);
     // Migrate existing presets once, until the user saves an explicit appearance.
     int legacy=GetPrivateProfileInt(L"Appearance",L"Theme",3,file);
     p.glassMode=legacy<0||legacy>=3;
@@ -98,6 +101,7 @@ static bool unicodeConfig(const wchar_t* path){
     HANDLE output=CreateFile(path,GENERIC_WRITE,0,0,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);bool ok=false;if(output!=INVALID_HANDLE_VALUE){DWORD written=0;ok=WriteFile(output,text,(count+1)*sizeof(wchar_t),&written,0)&&written==(count+1)*sizeof(wchar_t);CloseHandle(output);}HeapFree(GetProcessHeap(),0,text);return ok;
 }
 static bool writePreferences(const wchar_t* file,const Preferences& p){bool ok=true;
+    ok=p.toolbar.save(file)&&ok;
 #define WRITE(field,section) {wchar_t number[32];swprintf_s(number,L"%d",(int)p.field);ok=WritePrivateProfileString(section,WIDEN(#field),number,file)&&ok;}
     WRITE(glassMode,L"Appearance");
     WRITE(backgroundRgb,L"Appearance");WRITE(fontRgb,L"Appearance");WRITE(glassTintRgb,L"Appearance");

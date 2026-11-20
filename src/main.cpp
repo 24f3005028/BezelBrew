@@ -90,9 +90,10 @@ static bool swipeCandidate=false,swiping=false;static int swipeX=0,swipeY=0;stat
 static int horizontalWheel=0;static ULONGLONG lastWheel=0,lastWheelEvent=0;
 static double contentOpacity=1;
 constexpr int workstationPage=10;
-static const wchar_t* tabNames[]={L"Music",L"Shelf",L"Clipboard",L"Widgets",L"Apps",L"Focus",L"Settings",L"Workstations"};
+static constexpr const wchar_t* tabNames[]={L"Music",L"Shelf",L"Clipboard",L"Widgets",L"Apps",L"Focus",L"Settings",L"Workstations"};
 constexpr int primaryPages[]={0,1,2,3,5,6,7,workstationPage};
 constexpr int primaryTabCount=ARRAYSIZE(primaryPages);
+constexpr int pinTile=primaryTabCount;
 static_assert(ARRAYSIZE(tabNames)==primaryTabCount);
 static int primaryPage(int index){return primaryPages[index];}
 static int primaryIndex(int page){
@@ -100,30 +101,52 @@ static int primaryIndex(int page){
     return -1;
 }
 static int nextPrimaryPage(int page,int direction){
-    int index=primaryIndex(page);
-    if(index<0)return primaryPage(direction>0?0:primaryTabCount-1);
-    return primaryPage((index+direction+primaryTabCount)%primaryTabCount);
+    int pages[primaryTabCount],count=0,index=-1;
+    for(int tile:prefs.toolbar.order)if(tile<primaryTabCount&&prefs.toolbar.visible(tile)){
+        int current=primaryPage(tile);
+        if(current==page)index=count;
+        pages[count++]=current;
+    }
+    if(!count)return page;
+    if(index<0)return pages[direction>0?0:count-1];
+    return pages[(index+direction+count)%count];
 }
-constexpr RECT tileBounds(int index){
-    int left=36+index*52;
+constexpr RECT tileBounds(int position,int count){
+    int left=36+(ToolbarLayout::count-count)*26+position*52;
     return {left,9,left+36,45};
 }
 enum class ToolbarGlyph { Wave, Tray, Copies, Widgets, Launch, Focus, Tuning, Screens, Pin, Mail, Glass, ClearApps };
-constexpr ToolbarGlyph primaryGlyphs[]={
-    ToolbarGlyph::Wave, ToolbarGlyph::Tray, ToolbarGlyph::Copies, ToolbarGlyph::Widgets,
-    ToolbarGlyph::Launch, ToolbarGlyph::Focus, ToolbarGlyph::Tuning, ToolbarGlyph::Screens
-};
-static_assert(ARRAYSIZE(primaryGlyphs)==primaryTabCount);
 struct ToolbarControl {
-    int id;
-    RECT bounds;
+    int id,page;
     ToolbarGlyph glyph;
     const wchar_t* name;
 };
-constexpr ToolbarControl pinControl={900,tileBounds(8),ToolbarGlyph::Pin,L"Pin or unpin island"};
-constexpr ToolbarControl mailControl={902,tileBounds(9),ToolbarGlyph::Mail,L"Mail"};
-constexpr ToolbarControl appearanceControl={901,tileBounds(10),ToolbarGlyph::Glass,L"Appearance"};
-constexpr ToolbarControl clearAppsControl={903,tileBounds(11),ToolbarGlyph::ClearApps,L"Clear memory"};
+constexpr const wchar_t* clearMemoryLabel=L"Clear memory";
+constexpr ToolbarControl toolbarControls[]={
+    {0,0,ToolbarGlyph::Wave,tabNames[0]},
+    {1,1,ToolbarGlyph::Tray,tabNames[1]},
+    {2,2,ToolbarGlyph::Copies,tabNames[2]},
+    {3,3,ToolbarGlyph::Widgets,tabNames[3]},
+    {5,5,ToolbarGlyph::Launch,tabNames[4]},
+    {6,6,ToolbarGlyph::Focus,tabNames[5]},
+    {7,7,ToolbarGlyph::Tuning,tabNames[6]},
+    {workstationPage,workstationPage,ToolbarGlyph::Screens,tabNames[7]},
+    {900,-1,ToolbarGlyph::Pin,L"Pin"},
+    {902,9,ToolbarGlyph::Mail,L"Mail"},
+    {901,8,ToolbarGlyph::Glass,L"Appearance"},
+    {903,-1,ToolbarGlyph::ClearApps,clearMemoryLabel},
+};
+static_assert(ARRAYSIZE(toolbarControls)==ToolbarLayout::count);
+static int visiblePage(int preferred){
+    int fallback=-1;
+    for(int tile:prefs.toolbar.order)if(prefs.toolbar.visible(tile)){
+        const int page=toolbarControls[tile].page;
+        if(page<0)continue;
+        if(page==preferred)return preferred;
+        if(fallback<0)fallback=page;
+    }
+    return fallback<0?3:fallback;
+}
 static int startupPage(int savedTab){return savedTab==8?workstationPage:savedTab;}
 static const wchar_t* appearanceModes[]={L"Glass",L"Solid"};
 enum Icon {Music,IconFolder,Clipboard,Grid,Timer,Gear,Palette,Previous,Play,Next,Volume,Mic,Check,Plus,Trash,Arrow,Pause,Power,Monitor,Close,Minus,Envelope,Note,Phone,Voice};
@@ -327,8 +350,7 @@ static void drawToolbarGlyph(Graphics& g,ToolbarGlyph kind,float x,float y,float
     }
     g.Restore(state);
 }
-static void toolbarButton(Graphics& g,const ToolbarControl& control,bool active,float size=22){
-    const auto& b=control.bounds;
+static void toolbarButton(Graphics& g,const ToolbarControl& control,const RECT& b,bool active,float size){
     const int width=b.right-b.left,height=b.bottom-b.top;
     addHit(control.id,b.left,b.top,width,height,control.name);
     Color edge=active?fade(accent(),.7):panel(.19);
@@ -434,7 +456,7 @@ static void loadSettings(){
     GetModuleFileName(0,configFile,MAX_PATH);wchar_t* end=wcsrchr(configFile,L'\\');
     if(end)wcscpy_s(end+1,MAX_PATH-(end-configFile)-1,L"WinPixel.ini");
     wchar_t overridePath[MAX_PATH];if(GetEnvironmentVariable(L"WINPIXEL_CONFIG",overridePath,MAX_PATH)>0)wcscpy_s(configFile,overridePath);
-    readPreferences(configFile,prefs);uiScale=.55*prefs.sizePercent/100.0;smallWidth=prefs.hoverWidth/uiScale;smallHeight=prefs.hoverHeight/uiScale;selected=startupPage(prefs.defaultTab);
+    readPreferences(configFile,prefs);uiScale=.55*prefs.sizePercent/100.0;smallWidth=prefs.hoverWidth/uiScale;smallHeight=prefs.hoverHeight/uiScale;selected=visiblePage(startupPage(prefs.defaultTab));
     animations=GetPrivateProfileInt(L"Appearance",L"Animations",1,configFile)!=0;
     docked=GetPrivateProfileInt(L"Appearance",L"Docked",0,configFile)!=0;
 }
@@ -459,7 +481,9 @@ static void beginSwipe(int x,int y){swipeX=x;swipeY=y;swipeOffset=0;swipeCandida
 static void moveSwipe(int x,int y){
     if(!swipeCandidate)return;int dx=x-swipeX,dy=y-swipeY;
     if(!swiping&&abs(dy)>18&&abs(dy)>abs(dx)){swipeCandidate=false;return;}
-    if(!swiping&&abs(dx)>18&&abs(dx)>abs(dy)){swiping=true;pressed=-1;hover=-1;tabMoving=false;slideSource=selected;}
+    if(!swiping&&abs(dx)>18&&abs(dx)>abs(dy)){
+        if(nextPrimaryPage(selected,dx<0?1:-1)==selected){swipeCandidate=false;pressed=-1;return;}
+        swiping=true;pressed=-1;hover=-1;tabMoving=false;slideSource=selected;}
     if(swiping){swipeOffset=dx;if(swipeOffset>fullWidth*.85)swipeOffset=fullWidth*.85;if(swipeOffset<-fullWidth*.85)swipeOffset=-fullWidth*.85;slideDirection=dx<0?1:-1;slideTarget=nextPrimaryPage(selected,slideDirection);tabReveal=fabs(swipeOffset)/fullWidth;KillTimer(win,2);repaint();}
 }
 static void finishSwipe(bool canceled=false){
@@ -539,10 +563,10 @@ static void drawWidgets(Graphics& g,HDC dc){
     tile(g,dc,34,133,194,L"Local time",clock,Timer,accent());
     tile(g,dc,243,133,194,L"CPU",cpu,Monitor,secondary());
     tile(g,dc,452,133,194,L"Memory",ram,Grid,secondary());
-    addHit(707,452,245,194,30,clearAppsControl.name);
+    addHit(707,452,245,194,30,clearMemoryLabel);
     rounded(g,452,245,194,30,8,panel(.14));
     hoverBox(g,707,452,245,194,30,8);
-    label(dc,452,245,194,30,clearAppsControl.name,primary(),1,DT_CENTER);
+    label(dc,452,245,194,30,clearMemoryLabel,primary(),1,DT_CENTER);
 }
 constexpr int appColumns=4,visibleAppRows=2,appHitBase=1000;
 static int appScroll=0,appWheel=0;
@@ -696,14 +720,12 @@ static void paint(HDC dc){
     contentOffset=0;
     if(openness<.005&&!expanded)return;
     contentOpacity=1;
-    for(int i=0;i<primaryTabCount;i++){
-        int page=primaryPage(i);
-        toolbarButton(g,{page,tileBounds(i),primaryGlyphs[i],tabNames[i]},selected==page);
+    int position=0,visible=prefs.toolbar.visibleCount();
+    for(int tile:prefs.toolbar.order)if(prefs.toolbar.visible(tile)){
+        const auto& control=toolbarControls[tile];
+        const bool pin=control.id==900;
+        toolbarButton(g,control,tileBounds(position++,visible),pin?pinned:control.page==selected,pin?19:22);
     }
-    toolbarButton(g,pinControl,pinned,19);
-    toolbarButton(g,mailControl,selected==9);
-    toolbarButton(g,appearanceControl,selected==8);
-    toolbarButton(g,clearAppsControl,false);
     contentOpacity=1;contentOffset=0;
     if(tabMoving||swiping){int oldX=(int)(-slideDirection*fullWidth*tabReveal),newX=(int)(slideDirection*fullWidth*(1-tabReveal));drawPage(g,dc,slideSource,oldX,false);drawPage(g,dc,slideTarget,newX,false);}
     else drawPage(g,dc,selected,0,true);
@@ -763,10 +785,9 @@ static void setupTooltips(){
         tool.lpszText=(wchar_t*)name;
         SendMessage(tooltips,TTM_ADDTOOL,0,(LPARAM)&tool);
     };
-    for(int i=0;i<primaryTabCount;i++)toolbarTip(i+1,tileBounds(i),tabNames[i]);
-    const ToolbarControl auxiliary[]={pinControl,mailControl,appearanceControl,clearAppsControl};
-    for(const auto& control:auxiliary)
-        toolbarTip(control.id,control.bounds,control.name);
+    int position=0,visible=prefs.toolbar.visibleCount();
+    for(int tile:prefs.toolbar.order)if(prefs.toolbar.visible(tile))
+        toolbarTip(tile+1,tileBounds(position++,visible),toolbarControls[tile].name);
     TOOLINFO tip={sizeof(tip)};
     tip.hwnd=win;tip.uFlags=TTF_SUBCLASS;
     tip.uId=musicTitleTip;tip.lpszText=nowPlaying.title;

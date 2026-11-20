@@ -1,10 +1,14 @@
 #pragma once
 // A native, keyboard-accessible settings window. Drafts are applied explicitly.
 constexpr int workstationSettingsPage=9;
+constexpr int toolbarSettingsPage=10;
 constexpr int appCardBase=8700;
-constexpr int settingsPageCount=10;
-constexpr int settingsNavigationOrder[]={0,1,2,3,workstationSettingsPage,4,5,6,7,8};
-static int settingsNavigationRow(int page){return page==workstationSettingsPage?4:page>=4?page+1:page;}
+constexpr int settingsNavigationOrder[]={0,toolbarSettingsPage,1,2,3,workstationSettingsPage,4,5,6,7,8};
+constexpr int settingsPageCount=ARRAYSIZE(settingsNavigationOrder);
+static int settingsNavigationRow(int page){
+    for(int i=0;i<settingsPageCount;i++)if(settingsNavigationOrder[i]==page)return i;
+    return 0;
+}
 static HWND settingsWindow=0,settingsTabs=0,settingsMessage=0,settingsNavigation[settingsPageCount]={};static HFONT settingsFont=0,settingsTitleFont=0;
 static HWND settingsControls[80];static int settingsControlCount=0,settingsPage=0;static UINT settingsDpi=96;
 static char pendingClientSecret[4096]={};static bool connectorAdvanced[2]={};
@@ -169,6 +173,56 @@ static void updateConnectorStatus(){
     }
     if(settingsPage==6&&iphoneSetup)SetDlgItemText(settingsWindow,618,connectorView.iphoneStatus[0]?connectorView.iphoneStatus:L"Follow the three steps, then check your connection.");
 }
+constexpr int toolbarToggleBase=9200,toolbarEarlierBase=9220,toolbarLaterBase=9240,toolbarReset=9260;
+static void toolbarSettings(){
+    wchar_t shown[40];
+    swprintf_s(shown,L"%d of %d tiles shown",draft.toolbar.visibleCount(),ToolbarLayout::count);
+    control(WC_STATIC,shown,9261,38,115,420,28);
+    control(WC_BUTTON,L"Restore defaults",toolbarReset,536,110,152,34,WS_TABSTOP);
+    for(int row=0;row<ToolbarLayout::count;row++){
+        const int tile=draft.toolbar.order[row];
+        const int x=38+(row%2)*331,y=158+(row/2)*43;
+        HWND toggle=control(WC_BUTTON,toolbarControls[tile].name,toolbarToggleBase+row,
+                            x,y,180,34,BS_AUTOCHECKBOX|WS_TABSTOP);
+        SendMessage(toggle,BM_SETCHECK,draft.toolbar.visible(tile)?BST_CHECKED:BST_UNCHECKED,0);
+        EnableWindow(control(WC_BUTTON,L"Earlier",toolbarEarlierBase+row,x+184,y,66,34,WS_TABSTOP),row>0);
+        EnableWindow(control(WC_BUTTON,L"Later",toolbarLaterBase+row,x+253,y,66,34,WS_TABSTOP),
+                     row<ToolbarLayout::count-1);
+    }
+}
+static bool toolbarSettingsCommand(int id){
+    if(id>=toolbarToggleBase&&id<toolbarToggleBase+ToolbarLayout::count){
+        unsigned bit=1u<<draft.toolbar.order[id-toolbarToggleBase];
+        if(checked(id))draft.toolbar.shown|=bit;
+        else draft.toolbar.shown&=~bit;
+        wchar_t shown[40];
+        swprintf_s(shown,L"%d of %d tiles shown",draft.toolbar.visibleCount(),ToolbarLayout::count);
+        SetDlgItemText(settingsWindow,9261,shown);
+        return true;
+    }
+    int focusId=toolbarReset;
+    if(id==toolbarReset){
+        draft.toolbar=ToolbarLayout::defaults();
+    }else{
+        const bool earlier=id>=toolbarEarlierBase&&id<toolbarEarlierBase+ToolbarLayout::count;
+        const bool later=id>=toolbarLaterBase&&id<toolbarLaterBase+ToolbarLayout::count;
+        if(!earlier&&!later)return false;
+        const int row=id-(earlier?toolbarEarlierBase:toolbarLaterBase),target=row+(earlier?-1:1);
+        if(target<0||target>=ToolbarLayout::count)return true;
+        const int tile=draft.toolbar.order[row];
+        draft.toolbar.order[row]=draft.toolbar.order[target];
+        draft.toolbar.order[target]=tile;
+        focusId=(target==0||target==ToolbarLayout::count-1)?toolbarToggleBase+target:
+                (earlier?toolbarEarlierBase:toolbarLaterBase)+target;
+    }
+    int scroll=SettingsSkin::scroll;
+    populateSettings();
+    SettingsSkin::scroll=scroll;
+    SettingsSkin::layout();
+    HWND button=GetDlgItem(settingsWindow,focusId);
+    if(IsWindowVisible(button))SetFocus(button);
+    return true;
+}
 static void populateSettings(){
     if(settingsPage!=3)editingApp=-1;
     if(settingsPage!=workstationSettingsPage)workstationAddOpen=false;
@@ -218,6 +272,7 @@ static void populateSettings(){
 
     if(settingsPage==1){HWND displays=combo(201,L"Display",142);choice(displays,L"Automatic - current display");monitorCount=0;EnumDisplayMonitors(0,0,collectMonitors,0);int selectedMonitor=0;for(int i=0;i<monitorCount;i++){choice(displays,monitors[i].label);if(!_wcsicmp(draft.monitor,monitors[i].device))selectedMonitor=i+1;}SendMessage(displays,CB_SETCURSEL,selectedMonitor,0);HWND align=combo(202,L"Position",183);const wchar_t* alignNames[]={L"Top left",L"Top center",L"Top right"};for(auto name:alignNames)choice(align,name);SendMessage(align,CB_SETCURSEL,draft.alignment,0);editNumber(203,L"Horizontal offset (px)",224,draft.offset);checkbox(204,L"Open when the pointer rests on the top edge",265,draft.hoverEnabled);editNumber(205,L"Hover target width (px)",305,draft.hoverWidth);editNumber(206,L"Hover target height (px)",345,draft.hoverHeight);editNumber(207,L"Hover delay (ms)",385,draft.hoverDelay);editNumber(208,L"Close delay (ms)",425,draft.closeDelay);HWND speed=combo(209,L"Animation speed",465);choice(speed,L"Fast (180 ms)");choice(speed,L"Balanced (300 ms)");choice(speed,L"Relaxed (450 ms)");SendMessage(speed,CB_SETCURSEL,draft.animationMs<240?0:draft.animationMs>375?2:1,0);}
     if(settingsPage==2){HWND section=combo(301,L"Starting section",140);for(auto name:tabNames)choice(section,name);SendMessage(section,CB_SETCURSEL,primaryIndex(startupPage(draft.defaultTab)),0);checkbox(302,L"Animate the song waveform",181,draft.waveformEnabled);checkbox(303,L"Swipe and scroll horizontally between sections",216,draft.swipeEnabled);checkbox(304,L"Capture copied text (turning off clears history)",251,draft.clipboardEnabled);editNumber(305,L"Clipboard entries",291,draft.historyLimit);editNumber(306,L"Focus duration (minutes)",331,draft.focusMinutes);editNumber(307,L"Break duration (minutes)",371,draft.breakMinutes);checkbox(308,L"Start a break automatically after focus ends",411,draft.automaticBreak);checkbox(309,L"Start automatically when I sign in to Windows",451,draftStartup);}
+    if(settingsPage==toolbarSettingsPage)toolbarSettings();
     if(settingsPage==3)appsSettings();
     if(settingsPage==workstationSettingsPage)workstationSettings();
     if(settingsPage==4){control(WC_STATIC,L"A private scratchpad, saved locally with your settings. Up to 2,047 characters.",0,38,142,660,30);HWND note=control(WC_EDIT,draft.note,501,38,182,650,310,ES_MULTILINE|ES_AUTOVSCROLL|ES_WANTRETURN|WS_VSCROLL|WS_TABSTOP);SendMessage(note,EM_SETLIMITTEXT,2047,0);}
@@ -310,6 +365,8 @@ static bool applySettings(){
     if(wcscmp(prefs.gmailClientId,draft.gmailClientId)){Connectors::disconnect();}
     if(pendingClientSecret[0]){if(!Connectors::storeClientSecret(pendingClientSecret)){settingsError(L"Windows could not save the Google client credential. Nothing was applied.");return false;}SecureZeroMemory(pendingClientSecret,sizeof(pendingClientSecret));}
     bool wasCapture=prefs.clipboardEnabled;prefs=draft;
+    selected=visiblePage(selected);
+    if(!prefs.toolbar.visible(pinTile))pinned=false;
     scrollApps(0);
     SetWindowText(win,appName());wchar_t captionText[96];swprintf_s(captionText,L"%s Settings",appName());SetWindowText(settingsWindow,captionText);swprintf_s(tray.szTip,paused?L"%s paused - Win+Alt+N to resume":L"%s - right-click for menu",appName());tray.uFlags=NIF_TIP;Shell_NotifyIcon(NIM_MODIFY,&tray);excludeOverlayFromShell(win);InvalidateRect(settingsWindow,0,FALSE);animations=draftAnimations;docked=draftDocked;
     uiScale=.55*prefs.sizePercent/100.0;smallWidth=prefs.hoverWidth/uiScale;smallHeight=prefs.hoverHeight/uiScale;
@@ -369,6 +426,7 @@ case WM_HSCROLL:{
 }
 case WM_COMMAND:{int id=LOWORD(wp);
 if(id>=8100&&id<8100+settingsPageCount){if(readDraft()){settingsPage=id-8100;TabCtrl_SetCurSel(settingsTabs,settingsPage);populateSettings();}return 0;}
+if(settingsPage==toolbarSettingsPage&&HIWORD(wp)==BN_CLICKED&&toolbarSettingsCommand(id))return 0;
 if(settingsPage==3&&appsCommand(h,id,HIWORD(wp)))return 0;
 if(settingsPage==workstationSettingsPage&&workstationCommand(h,id,HIWORD(wp)))return 0;
 if(id==8410||id==8411){
