@@ -310,7 +310,7 @@ static void clear(HWND owner,wchar_t (&result)[150]){
     if(windows.available[codex]){
         TASKDIALOGCONFIG dialog={sizeof(dialog)};
         dialog.hwndParent=owner;
-        dialog.dwFlags=TDF_ALLOW_DIALOG_CANCELLATION|TDF_POSITION_RELATIVE_TO_WINDOW;
+        dialog.dwFlags=TDF_ALLOW_DIALOG_CANCELLATION|TDF_POSITION_RELATIVE_TO_WINDOW|TDF_VERIFICATION_FLAG_CHECKED;
         dialog.dwCommonButtons=TDCBF_OK_BUTTON|TDCBF_CANCEL_BUTTON;
         dialog.pszWindowTitle=L"Close apps?";
         dialog.pszContent=details;
